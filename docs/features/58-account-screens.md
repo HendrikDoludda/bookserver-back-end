@@ -7,8 +7,8 @@ codes, sign-up and email verification, password reset, and the language setting 
 [app skeleton](73-flutter-app.md).
 
 ## Build
-- [ ] 3 h · Login screen: username or email plus password [FE]
-- [ ] 1 h · Log-out action [FE]
+- [x] 3 h · Login screen: username or email plus password [FE]
+- [x] 1 h · Log-out action [FE]
 - [ ] 2 h · Code-entry step after the password, when login answers `totp_required`; it replaces the `login.totp_unavailable` notice, whose text is deleted [FE]
 - [ ] 1 h · "Use a recovery code" option on the code-entry step [FE]
 - [ ] 4 h · 2FA settings: enable (QR code + confirm) and disable [FE]

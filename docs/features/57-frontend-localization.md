@@ -15,4 +15,4 @@ so adding a language later is catalog data instead of a rework. The client fetch
 - [ ] 1 h · Re-check the cached catalog with `If-None-Match` and its ETag (on app start, or daily) instead of downloading it every time; a `304` keeps the cached copy [FE]
 - [ ] 1 h · Pick the language: the user's setting ([31](31-per-user-settings.md)), else the browser or OS locale if the server offers it, else the default from `GET /api/v1/locales` [FE]
 - [ ] 1 h · Show each language's icon in the language list from `GET /api/v1/locales` [FE]
-- [ ] 0.5 h · Check by hand: the first screen shows no literal UI strings
+- [x] 0.5 h · Check by hand: the first screen shows no literal UI strings
