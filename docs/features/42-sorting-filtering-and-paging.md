@@ -2,8 +2,9 @@
 
 State: not started
 
-The list endpoints return everything, in whatever order SQLite hands it back. This adds
-sorting (title, recently added, volume number), filters (finished or not, tag, author) and
+The list endpoints return everything, in one fixed order: libraries by id, a library's series by
+name, a series' books in reading order ([43](43-browsing.md)). This adds sorting by choice
+(title, recently added, volume number), filters (finished or not, tag, author) and
 paging — the backend half of the browse screens — plus the A–Z bar that jumps through the
 series list.
 

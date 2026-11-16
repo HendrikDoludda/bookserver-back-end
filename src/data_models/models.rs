@@ -185,6 +185,11 @@ impl BookLanguage {
             BookLanguage::Other(lang) => lang.clone(),
         }
     }
+
+    /// Whether this is the scanner's placeholder for a file that names no language.
+    pub fn is_unknown(&self) -> bool {
+        matches!(self, BookLanguage::Other(code) if code.eq_ignore_ascii_case("unknown"))
+    }
 }
 
 // === Book metadata model =====================================================

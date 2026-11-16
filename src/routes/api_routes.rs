@@ -400,11 +400,11 @@ mod tests {
                 conn.execute("INSERT INTO series (name) VALUES ('the long road')", [])
                     .unwrap();
                 let series = conn.last_insert_rowid();
-                // Like the scanner: no tags, and a file time it couldn't read.
+                // Like the scanner: no tags, no language, and a file time it couldn't read.
                 conn.execute(
                     "INSERT INTO books (title, author, format, language, tags, file_path, \
                      volume_number, series) \
-                     VALUES ('The Long Road', 'Unknown Author', 'cbz', 'unknown', '', \
+                     VALUES ('The Long Road', 'Unknown Author', 'cbz', 'Unknown', '', \
                      '/books/The Long Road v01.cbz', 1, ?1)",
                     [series],
                 )
@@ -418,13 +418,132 @@ mod tests {
         let uri = format!("/api/v1/series/{series}/books");
         let (status, _, body) = call(&app, authorized("GET", &uri, &member, None)).await;
         assert_eq!(status, StatusCode::OK);
-        let books = json(&body);
-        assert_eq!(books.as_array().unwrap().len(), 1);
-        assert_eq!(books[0]["id"], book);
-        assert_eq!(books[0]["title"], "The Long Road");
-        assert_eq!(books[0]["volume_number"], 1);
-        assert_eq!(books[0]["tags"], serde_json::json!([]));
-        assert_eq!(books[0]["last_modified"], serde_json::Value::Null);
+        assert_eq!(
+            json(&body),
+            serde_json::json!([{
+                "id": book,
+                "title": "The Long Road",
+                "author": "Unknown Author",
+                "format": "cbz",
+                "tags": [],
+                "description": null,
+                "language": null,
+                "page_count": null,
+                "series": series,
+                "volume_number": 1,
+                "chapter_number": null,
+                "page_number": null,
+                "last_modified": null,
+                "file_size": null,
+            }])
+        );
+    }
+
+    #[tokio::test]
+    async fn a_books_answer_carries_no_server_path_or_hash() {
+        let temp = TempDatabase::open();
+        let book = temp
+            .db
+            .setup_new_transaction(|conn| {
+                conn.execute(
+                    "INSERT INTO books (title, author, format, language, cover_image, \
+                     description, tags, file_path, page_count, volume_number, chapter_number, \
+                     file_hash, last_modified, file_size) \
+                     VALUES ('A Quiet Sea', 'R. Writer', 'epub', 'de', \
+                     './cover_images/abc123.jpg', 'Twelve chapters', 'sea,quiet', \
+                     '/Users/someone/books/A Quiet Sea v03 c12.epub', 240, 3, 12, 'abc123', \
+                     1700000000, 1048576)",
+                    [],
+                )
+                .unwrap();
+                Ok(conn.last_insert_rowid())
+            })
+            .unwrap();
+        let member = logged_in(&temp, "bob", "member");
+        let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
+
+        let uri = format!("/api/v1/books/{book}");
+        let (status, _, body) = call(&app, authorized("GET", &uri, &member, None)).await;
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            json(&body),
+            serde_json::json!({
+                "title": "A Quiet Sea",
+                "author": "R. Writer",
+                "format": "epub",
+                "tags": ["sea", "quiet"],
+                "description": "Twelve chapters",
+                "language": "de",
+                "page_count": 240,
+                "series": null,
+                "volume_number": 3,
+                "chapter_number": 12,
+                "page_number": null,
+                "last_modified": 1700000000,
+                "file_size": 1048576,
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn the_series_and_book_lists_answer_in_reading_order() {
+        let temp = TempDatabase::open();
+        // Inserted against the expected order, so the id order would be the wrong one.
+        let (library, alpha) = temp
+            .db
+            .setup_new_transaction(|conn| {
+                conn.execute(
+                    "INSERT INTO library (library_name, library_type) VALUES ('/books', 'books')",
+                    [],
+                )
+                .unwrap();
+                let library = conn.last_insert_rowid();
+                let mut series = Vec::new();
+                for name in ["zeta", "alpha"] {
+                    conn.execute("INSERT INTO series (name) VALUES (?1)", [name])
+                        .unwrap();
+                    let id = conn.last_insert_rowid();
+                    conn.execute(
+                        "INSERT INTO library_elements (library_id, series_id) VALUES (?1, ?2)",
+                        [library, id],
+                    )
+                    .unwrap();
+                    series.push(id);
+                }
+                let alpha = series[1];
+                for volume in [2, 1] {
+                    conn.execute(
+                        "INSERT INTO books (title, author, format, language, tags, file_path, \
+                         volume_number, series) \
+                         VALUES ('Alpha', 'Unknown Author', 'cbz', 'Unknown', '', ?1, ?2, ?3)",
+                        rusqlite::params![format!("/books/Alpha v{volume}.cbz"), volume, alpha],
+                    )
+                    .unwrap();
+                }
+                Ok((library, alpha))
+            })
+            .unwrap();
+        let member = logged_in(&temp, "bob", "member");
+        let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
+        let field = |body: &[u8], name: &str| -> Vec<serde_json::Value> {
+            json(body)
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|row| row[name].clone())
+                .collect()
+        };
+
+        let uri = format!("/api/v1/libraries/{library}/series");
+        let (status, _, body) = call(&app, authorized("GET", &uri, &member, None)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(field(&body, "name"), ["alpha", "zeta"]);
+
+        let uri = format!("/api/v1/series/{alpha}/books");
+        let (status, _, body) = call(&app, authorized("GET", &uri, &member, None)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(field(&body, "volume_number"), [1, 2]);
     }
 
     #[tokio::test]

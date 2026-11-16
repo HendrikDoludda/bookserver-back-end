@@ -14,6 +14,7 @@ use axum::{
 };
 
 use crate::{
+    data_models::books_model::BookSummary,
     db::Database,
     error_types::{internal_error_response, DatabaseError},
     folder_scanner::scan_all_folders,
@@ -33,7 +34,7 @@ pub async fn get_libraries(
     Ok(Json(db.get_all_entries::<LibraryMetadata>()?))
 }
 
-/// Return every series that belongs to the given library, each with its row id.
+/// Return every series that belongs to the given library, by name, each with its row id.
 pub async fn get_series_in_library(
     _session: AuthSession,
     State(db): State<Arc<Database>>,
@@ -45,16 +46,24 @@ pub async fn get_series_in_library(
     Ok(Json(series))
 }
 
-/// Return every book that belongs to the given series, each with its row id.
+/// Return every book that belongs to the given series, in reading order, each with its row id.
 pub async fn get_series_children(
     _session: AuthSession,
     State(db): State<Arc<Database>>,
     PathParams(series_id): PathParams<i64>,
-) -> Result<Json<Vec<WithId<BookMetadata>>>, DatabaseError> {
+) -> Result<Json<Vec<WithId<BookSummary>>>, DatabaseError> {
     let book_ids = db.get_books_in_series(series_id)?;
     let books = db.get_entries_batch::<BookMetadata>(&book_ids)?;
 
-    Ok(Json(books))
+    Ok(Json(
+        books
+            .into_iter()
+            .map(|book| WithId {
+                id: book.id,
+                data: BookSummary::from(book.data),
+            })
+            .collect(),
+    ))
 }
 
 /// Stream a book file (with HTTP range support, handled inside `streaming_file`).
@@ -76,10 +85,10 @@ pub async fn retrieve_metadata(
     _session: AuthSession,
     State(db): State<Arc<Database>>,
     PathParams(id): PathParams<i64>,
-) -> Result<Json<BookMetadata>, DatabaseError> {
+) -> Result<Json<BookSummary>, DatabaseError> {
     // TODO: return metadata for every metadata type, not just books.
     let metadata = db.get_entry::<BookMetadata>(id)?;
-    Ok(Json(metadata))
+    Ok(Json(BookSummary::from(metadata)))
 }
 
 /// Kick off a scan of every configured book directory.

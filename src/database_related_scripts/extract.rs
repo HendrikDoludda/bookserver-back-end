@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::{
     data_models::models::{
         BookMetadata, BookSeriesMetadata, LibraryMetadata, RecoveryCodes, Sessions, UserMetadata,
@@ -30,8 +32,8 @@ pub trait Extract: FromRow {
             .map_err(logged("reading", Self::TABLE, DatabaseError::QueryFailure))
     }
 
-    /// Fetch many rows by key in a single query. Returns each row paired with its
-    /// key; keys that don't exist are simply absent from the result.
+    /// Fetch many rows by key in a single query, in the order of `ids`. Returns each row
+    /// paired with its key; keys that don't exist are simply absent from the result.
     fn extract_batch(conn: &Connection, ids: &[i64]) -> Result<Vec<WithId<Self>>, DatabaseError>
     where
         Self: Serialize,
@@ -69,11 +71,19 @@ pub trait Extract: FromRow {
             })
             .map_err(logged("reading", Self::TABLE, DatabaseError::QueryFailure))?;
 
-        rows.collect::<Result<Vec<_>, _>>().map_err(logged(
+        let mut rows = rows.collect::<Result<Vec<_>, _>>().map_err(logged(
             "reading",
             Self::TABLE,
             DatabaseError::NextRowFailure,
-        ))
+        ))?;
+
+        // SQLite answers `IN (…)` in its own order; callers pass the ids in the order they want.
+        let mut position = HashMap::new();
+        for (at, id) in ids.iter().enumerate() {
+            position.entry(*id).or_insert(at);
+        }
+        rows.sort_by_key(|row| position.get(&row.id).copied());
+        Ok(rows)
     }
 
     /// Fetch every row of the table in key order, each paired with its key, in one query.
@@ -223,21 +233,37 @@ mod tests {
     }
 
     #[test]
-    fn extract_batch_pairs_each_row_with_its_key() {
+    fn extract_batch_pairs_each_row_with_its_key_in_the_order_of_the_ids() {
         let conn = memory_connection();
         let alice = insert_user(&conn, "alice");
         let bob = insert_user(&conn, "bob");
-        insert_totp(&conn, alice, "alice-secret");
-        insert_totp(&conn, bob, "bob-secret");
+        let carol = insert_user(&conn, "carol");
+        for (user_id, secret) in [(alice, "a"), (bob, "b"), (carol, "c")] {
+            insert_totp(&conn, user_id, secret);
+        }
 
-        let mut rows = TOTP::extract_batch(&conn, &[bob, alice, 999]).unwrap();
-        rows.sort_by_key(|row| row.id);
+        // Neither key order nor insertion order, and a missing key in between.
+        let rows = TOTP::extract_batch(&conn, &[bob, 999, carol, alice]).unwrap();
 
         let found: Vec<(i64, &str)> = rows
             .iter()
             .map(|row| (row.id, row.data.authentication_secret.as_str()))
             .collect();
-        assert_eq!(found, vec![(alice, "alice-secret"), (bob, "bob-secret")]);
+        assert_eq!(found, vec![(bob, "b"), (carol, "c"), (alice, "a")]);
+    }
+
+    #[test]
+    fn extract_batch_lists_a_key_given_twice_once_at_its_first_place() {
+        let conn = memory_connection();
+        let alice = insert_user(&conn, "alice");
+        let bob = insert_user(&conn, "bob");
+        insert_totp(&conn, alice, "a");
+        insert_totp(&conn, bob, "b");
+
+        let rows = TOTP::extract_batch(&conn, &[bob, alice, bob]).unwrap();
+
+        let found: Vec<i64> = rows.iter().map(|row| row.id).collect();
+        assert_eq!(found, vec![bob, alice]);
     }
 
     #[test]

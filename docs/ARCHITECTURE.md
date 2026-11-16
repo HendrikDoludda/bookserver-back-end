@@ -77,7 +77,8 @@
 - Each table names its key column (`KEY` on `Extract` and `Update`, `DatabaseTypes::get_key_column`); nothing assumes it is `id`.
 - Tables without a single key column (the `library_elements` junction, `email_codes`) don't implement `Extract`; dedicated functions query them — `Database` methods for the junction, `db_email_codes.rs` for the codes.
 - The translation catalog's tables (`locales`, `translation_keys`, `translations`) are queried only through `db_translations.rs`.
-- A list reads its rows in one query — `extract_all` for a whole table, or the ids first and then one `IN (…)` query for a part of it — never one query per row.
+- A list reads its rows in one query — `extract_all` for a whole table, or the ids first, in the list's order, and then one `IN (…)` query (`extract_batch`), which keeps that order — never one query per row.
+- An API answer never carries a server file path or a file hash: a book goes out as `BookSummary`, and its file and cover are reached by its id.
 - Every reference to another table is a declared `FOREIGN KEY` — `PRAGMA foreign_keys = ON` enforces only declared ones.
 - Times are stored as `INTEGER` unix seconds and read with `read_time` (must have a value — NULL is an error naming the column) or `read_optional_time` (NULL is `None`).
 - A column is nullable exactly when its Rust field is an `Option`.

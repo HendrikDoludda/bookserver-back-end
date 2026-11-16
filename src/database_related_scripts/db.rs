@@ -361,13 +361,27 @@ impl Database {
         T::search_for_multiple_rows(conn, columns, values, query_separator)
     }
 
+    /// The ids of a series' books in reading order: by volume, then chapter — a book without
+    /// the number after those with one — then title, then id.
     pub fn get_books_in_series(&self, series_id: i64) -> Result<Vec<i64>, DatabaseError> {
         let conn = self
             .pool
             .get()
             .map_err(|_| DatabaseError::PoolConnectionRetrievalFailure)?;
+        Self::get_books_in_series_with_connection(&conn, series_id)
+    }
+
+    pub fn get_books_in_series_with_connection(
+        conn: &Connection,
+        series_id: i64,
+    ) -> Result<Vec<i64>, DatabaseError> {
+        // SQLite sorts NULL before every number, so `IS NULL` comes first to put it last.
         let mut stmt = conn
-            .prepare("SELECT id FROM books WHERE series = ?1")
+            .prepare(
+                "SELECT id FROM books WHERE series = ?1 \
+                 ORDER BY volume_number IS NULL, volume_number, \
+                 chapter_number IS NULL, chapter_number, title COLLATE NOCASE, id",
+            )
             .map_err(logged(
                 "reading",
                 "books",
@@ -421,12 +435,18 @@ impl Database {
         Self::get_series_entries_in_library_with_connection(&conn, library_id)
     }
 
+    /// The ids of a library's series, by name.
     pub fn get_series_entries_in_library_with_connection(
         conn: &Connection,
         library_id: i64,
     ) -> Result<Vec<i64>, DatabaseError> {
         let mut stmt = conn
-            .prepare("SELECT series_id FROM library_elements WHERE library_id = ?1")
+            .prepare(
+                "SELECT library_elements.series_id FROM library_elements \
+                 JOIN series ON series.id = library_elements.series_id \
+                 WHERE library_elements.library_id = ?1 \
+                 ORDER BY series.name COLLATE NOCASE, series.id",
+            )
             .map_err(logged(
                 "reading",
                 "library_elements",
@@ -747,5 +767,104 @@ mod tests {
                 "{junction:?}"
             );
         }
+    }
+
+    fn insert_series(conn: &Connection, name: &str) -> i64 {
+        conn.execute("INSERT INTO series (name) VALUES (?1)", [name])
+            .unwrap();
+        conn.last_insert_rowid()
+    }
+
+    /// A book of `series`, written the way the scanner writes one.
+    fn insert_book(
+        conn: &Connection,
+        series: i64,
+        title: &str,
+        volume: Option<i64>,
+        chapter: Option<i64>,
+    ) -> i64 {
+        conn.execute(
+            "INSERT INTO books (title, author, format, language, tags, file_path, \
+             volume_number, chapter_number, series) \
+             VALUES (?1, 'Unknown Author', 'cbz', 'unknown', '', ?2, ?3, ?4, ?5)",
+            rusqlite::params![
+                title,
+                format!("/books/{}.cbz", uuid::Uuid::new_v4()),
+                volume,
+                chapter,
+                series
+            ],
+        )
+        .unwrap();
+        conn.last_insert_rowid()
+    }
+
+    #[test]
+    fn a_series_books_come_in_reading_order() {
+        let conn = memory_connection();
+        let series = insert_series(&conn, "the long road");
+        let other = insert_series(&conn, "another");
+        // Written out of order, so the order has to come from the query.
+        let extras = insert_book(&conn, series, "Extras", None, None);
+        let volume_two = insert_book(&conn, series, "The Long Road", Some(2), None);
+        let chapter_three = insert_book(&conn, series, "The Long Road", None, Some(3));
+        let bonus = insert_book(&conn, series, "bonus", None, None);
+        let one_two = insert_book(&conn, series, "The Long Road", Some(1), Some(2));
+        let one_without_chapter = insert_book(&conn, series, "The Long Road", Some(1), None);
+        let chapter_one = insert_book(&conn, series, "The Long Road", None, Some(1));
+        let one_one = insert_book(&conn, series, "The Long Road", Some(1), Some(1));
+        insert_book(&conn, other, "Elsewhere", Some(1), None);
+
+        let ids = Database::get_books_in_series_with_connection(&conn, series).unwrap();
+
+        // "bonus" before "Extras": a plain byte order would put the capital E first.
+        assert_eq!(
+            ids,
+            [
+                one_one,
+                one_two,
+                one_without_chapter,
+                volume_two,
+                chapter_one,
+                chapter_three,
+                bonus,
+                extras
+            ]
+        );
+    }
+
+    #[test]
+    fn a_librarys_series_come_by_name_ignoring_case() {
+        let conn = memory_connection();
+        let library = |name: &str| {
+            conn.execute(
+                "INSERT INTO library (library_name, library_type) VALUES (?1, 'books')",
+                [name],
+            )
+            .unwrap();
+            conn.last_insert_rowid()
+        };
+        let (books, other) = (library("books"), library("other"));
+        let zeta = insert_series(&conn, "zeta");
+        let beta = insert_series(&conn, "Beta");
+        let alpha = insert_series(&conn, "alpha");
+        let elsewhere = insert_series(&conn, "aardvark");
+        for (library_id, series_id) in [
+            (books, zeta),
+            (books, beta),
+            (books, alpha),
+            (other, elsewhere),
+        ] {
+            conn.execute(
+                "INSERT INTO library_elements (library_id, series_id) VALUES (?1, ?2)",
+                [library_id, series_id],
+            )
+            .unwrap();
+        }
+
+        let ids = Database::get_series_entries_in_library_with_connection(&conn, books).unwrap();
+
+        // A plain byte order would put "Beta" first.
+        assert_eq!(ids, [alpha, beta, zeta]);
     }
 }
