@@ -219,6 +219,7 @@ fn email_config_from(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::TempDir;
     use std::collections::HashMap;
 
     fn parse(
@@ -405,26 +406,8 @@ mod tests {
         }
     }
 
-    /// A folder under the system temp directory, deleted with everything in it when dropped.
-    struct TempDir(std::path::PathBuf);
-
-    impl TempDir {
-        fn new() -> Self {
-            TempDir(
-                std::env::temp_dir()
-                    .join(format!("bookserver-config-test-{}", uuid::Uuid::new_v4())),
-            )
-        }
-    }
-
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
-        }
-    }
-
     fn signing_key_in(dir: &TempDir) -> [u8; 32] {
-        load_or_create_secrets(&dir.0)
+        load_or_create_secrets(dir.path())
             .unwrap()
             .signing_key()
             .unwrap()
@@ -474,8 +457,8 @@ mod tests {
     #[test]
     fn a_new_secrets_file_is_readable_only_by_its_owner() {
         let dir = TempDir::new();
-        load_or_create_secrets(&dir.0).unwrap();
-        assert_eq!(mode_of(&dir.0.join("secrets.toml")), 0o600);
+        load_or_create_secrets(dir.path()).unwrap();
+        assert_eq!(mode_of(&dir.path().join("secrets.toml")), 0o600);
     }
 
     #[cfg(unix)]
@@ -485,7 +468,7 @@ mod tests {
 
         let dir = TempDir::new();
         let key = signing_key_in(&dir);
-        let path = dir.0.join("secrets.toml");
+        let path = dir.path().join("secrets.toml");
         fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
 
         assert_eq!(signing_key_in(&dir), key);
@@ -496,12 +479,11 @@ mod tests {
     #[test]
     fn a_temp_file_left_by_a_crash_does_not_block_the_first_start() {
         let dir = TempDir::new();
-        fs::create_dir_all(&dir.0).unwrap();
-        fs::write(dir.0.join("secrets.toml.tmp"), "half-written").unwrap();
+        dir.write("secrets.toml.tmp", b"half-written");
 
         signing_key_in(&dir);
 
-        assert_eq!(mode_of(&dir.0.join("secrets.toml")), 0o600);
-        assert!(!dir.0.join("secrets.toml.tmp").exists());
+        assert_eq!(mode_of(&dir.path().join("secrets.toml")), 0o600);
+        assert!(!dir.path().join("secrets.toml.tmp").exists());
     }
 }

@@ -3,14 +3,15 @@
 State: in progress
 
 The scanner extracts one cover per book into `./cover_images/<file hash>.<ext>` — the first
-page of a PDF, the first image of a CBZ or image folder, an image from an EPUB. Nothing
-serves them yet, and series and libraries have no covers of their own.
+page of a PDF, the first image of a CBZ or image folder, an image from an EPUB.
+`GET /covers/{kind}/{id}` serves a book's cover, and a series' or library's: its own — which
+nothing sets yet — else its first book's.
 
 ## Build
 - [ ] 2 h · Without the PDFium library, PDFs are left out of the catalog entirely: `Pdfium::default()` panics during cover extraction, which runs before the book row is inserted. Bind with a call that returns an error instead, so a missing library costs the cover, not the book [BE]
 - [ ] 4 h · Bundle the PDFium library so PDF covers work on every OS, and on macOS without symlinking the dylib (TODO in `cover_image_retriever.rs`) [BE]
-- [ ] 2 h · Serve covers at `GET /covers/{kind}/{id}` (answers 501 until then) through `ServeFile`, the way `request_file` streams books. `kind` is `book`, `series` or `library` — any other answers 400; a row without a cover, or a cover file gone from disk, answers 404 `not_found` as JSON [BE]
-- [ ] 1.5 h · Series and library covers fall back when read, nothing stored: a row's own `cover_image` first; else, for a series, its first book with a cover in reading order ([43](43-browsing.md)); for a library, the cover of its first series by name that has one [BE]
+- [x] 2 h · Serve covers at `GET /covers/{kind}/{id}` (answers 501 until then) through `ServeFile`, the way `request_file` streams books. `kind` is `book`, `series` or `library` — any other answers 400; a row without a cover, or a cover file gone from disk, answers 404 `not_found` as JSON [BE]
+- [x] 1.5 h · Series and library covers fall back when read, nothing stored: a row's own `cover_image` first; else, for a series, its first book with a cover in reading order ([43](43-browsing.md)); for a library, the cover of its first series by name that has one [BE]
 - [ ] 3 h · Covers for series and libraries that a user can set — the columns exist, but the scanner always writes NULL and no endpoint sets them [BE]
 - [ ] 0.5 h · The series and library JSON stop sending `cover_image`, a server file path — the app gets covers from `GET /covers/{kind}/{id}` [BE]
 - [ ] 3 h · Set a series or library cover from the frontend [FE]

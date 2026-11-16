@@ -4,7 +4,7 @@ use std::time::SystemTime;
 
 use r2d2::{ManageConnection, Pool};
 use r2d2_sqlite::SqliteConnectionManager;
-use rusqlite::{Connection, Result, ToSql, TransactionBehavior};
+use rusqlite::{Connection, OptionalExtension, Result, ToSql, TransactionBehavior};
 use serde::Serialize;
 
 use crate::data_models::models::{
@@ -26,6 +26,12 @@ use crate::error_types::{AppErrors, DatabaseError};
 pub struct Database {
     pool: r2d2::Pool<SqliteConnectionManager>,
 }
+
+/// A series' books in reading order: by volume, then chapter — a book without the number after
+/// those with one — then title, then id.
+// SQLite sorts NULL before every number, so `IS NULL` comes first to put it last.
+const BOOK_READING_ORDER: &str = "volume_number IS NULL, volume_number, \
+    chapter_number IS NULL, chapter_number, title COLLATE NOCASE, id";
 
 /// Settings every connection needs. SQLite applies them per connection, not per file,
 /// so a connection that skips this runs without foreign keys.
@@ -375,18 +381,12 @@ impl Database {
         conn: &Connection,
         series_id: i64,
     ) -> Result<Vec<i64>, DatabaseError> {
-        // SQLite sorts NULL before every number, so `IS NULL` comes first to put it last.
-        let mut stmt = conn
-            .prepare(
-                "SELECT id FROM books WHERE series = ?1 \
-                 ORDER BY volume_number IS NULL, volume_number, \
-                 chapter_number IS NULL, chapter_number, title COLLATE NOCASE, id",
-            )
-            .map_err(logged(
-                "reading",
-                "books",
-                DatabaseError::TaskPreparationFailure,
-            ))?;
+        let query = format!("SELECT id FROM books WHERE series = ?1 ORDER BY {BOOK_READING_ORDER}");
+        let mut stmt = conn.prepare(&query).map_err(logged(
+            "reading",
+            "books",
+            DatabaseError::TaskPreparationFailure,
+        ))?;
         let rows = stmt
             .query_map(rusqlite::params![series_id], |row| row.get::<_, i64>("id"))
             .map_err(logged("reading", "books", DatabaseError::QueryFailure))?;
@@ -395,6 +395,20 @@ impl Database {
             "books",
             DatabaseError::NextRowFailure,
         ))
+    }
+
+    /// The stored cover of a series' first book, in reading order, that has one.
+    pub fn first_book_cover_with_connection(
+        conn: &Connection,
+        series_id: i64,
+    ) -> Result<Option<String>, DatabaseError> {
+        let query = format!(
+            "SELECT cover_image FROM books WHERE series = ?1 AND cover_image IS NOT NULL \
+             ORDER BY {BOOK_READING_ORDER} LIMIT 1"
+        );
+        conn.query_row(&query, [series_id], |row| row.get(0))
+            .optional()
+            .map_err(logged("reading", "books", DatabaseError::QueryFailure))
     }
 
     pub fn remove_entry_from_library_elements(

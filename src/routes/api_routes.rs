@@ -18,7 +18,7 @@ use crate::{
         },
         helpers::{method_not_allowed, not_found, not_implemented, ping_server},
         library::{
-            delete_library, get_libraries, get_series_children, get_series_in_library,
+            delete_library, get_cover, get_libraries, get_series_children, get_series_in_library,
             request_file, retrieve_metadata, scan_all_directories,
         },
         locales::{get_translations, list_locales},
@@ -64,7 +64,7 @@ pub fn set_up_routes() -> Router<AppState> {
             "/books/{id}/progress",
             get(not_implemented).patch(not_implemented),
         )
-        .route("/covers/{kind}/{id}", get(not_implemented))
+        .route("/covers/{kind}/{id}", get(get_cover))
         .route("/scan", post(scan_all_directories))
         .route("/scan/status", get(not_implemented))
         .route("/directories/{id}/scan", post(not_implemented))
@@ -125,7 +125,9 @@ mod tests {
             auth::{hash_secret, hash_token},
             email_helper::Mailer,
         },
-        test_support::{code_in, insert_texts, insert_user, TempDatabase, TEST_SETUP_CODE},
+        test_support::{
+            code_in, insert_texts, insert_user, TempDatabase, TempDir, TEST_SETUP_CODE,
+        },
     };
 
     #[tokio::test]
@@ -284,7 +286,6 @@ mod tests {
             ("PATCH", "/api/v1/libraries/1"),
             ("GET", "/api/v1/books/1/progress"),
             ("PATCH", "/api/v1/books/1/progress"),
-            ("GET", "/api/v1/covers/book/1"),
             ("GET", "/api/v1/scan/status"),
             ("POST", "/api/v1/directories/1/scan"),
             ("POST", "/api/v1/metadata/scan"),
@@ -544,6 +545,224 @@ mod tests {
         let (status, _, body) = call(&app, authorized("GET", &uri, &member, None)).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(field(&body, "volume_number"), [1, 2]);
+    }
+
+    #[tokio::test]
+    async fn a_cover_comes_from_its_own_row_or_else_from_the_first_book_in_reading_order() {
+        let temp = TempDatabase::open();
+        let files = TempDir::new();
+        // Each file holds its own name, so a body shows which cover was served.
+        let cover = |name: &str| {
+            files
+                .write(name, name.as_bytes())
+                .to_string_lossy()
+                .into_owned()
+        };
+        let [extra, two, three, zeta_own, zeta_book, library_own] = [
+            "extra.png",
+            "two.png",
+            "three.png",
+            "zeta-own.png",
+            "zeta-book.png",
+            "library-own.png",
+        ]
+        .map(cover);
+        let (volume_three, beta, zeta, library, own_library) = temp
+            .db
+            .setup_new_transaction(move |conn| {
+                let add = |sql: &str, params: &[&dyn rusqlite::ToSql]| {
+                    conn.execute(sql, params).unwrap();
+                    conn.last_insert_rowid()
+                };
+                let series = |name: &str, cover: Option<&str>| {
+                    add(
+                        "INSERT INTO series (name, cover_image) VALUES (?1, ?2)",
+                        &[&name, &cover],
+                    )
+                };
+                let book = |series: i64, volume: Option<i64>, cover: Option<&str>| {
+                    add(
+                        "INSERT INTO books (title, author, format, language, tags, file_path, \
+                         volume_number, series, cover_image) \
+                         VALUES ('Book', 'Unknown Author', 'cbz', 'Unknown', '', ?1, ?2, ?3, ?4)",
+                        &[&uuid::Uuid::new_v4().to_string(), &volume, &series, &cover],
+                    )
+                };
+                let library = |cover: Option<&str>| {
+                    add(
+                        "INSERT INTO library (library_name, library_type, cover_image) \
+                         VALUES ('books', 'books', ?1)",
+                        &[&cover],
+                    )
+                };
+                let link = |library: i64, series: i64| {
+                    add(
+                        "INSERT INTO library_elements (library_id, series_id) VALUES (?1, ?2)",
+                        &[&library, &series],
+                    );
+                };
+
+                // Beta's lowest id has a cover but no volume, and its volume 1 has no cover.
+                let beta = series("Beta", None);
+                book(beta, None, Some(extra.as_str()));
+                book(beta, Some(1), None);
+                let volume_three = book(beta, Some(3), Some(three.as_str()));
+                book(beta, Some(2), Some(two.as_str()));
+                let zeta = series("zeta", Some(zeta_own.as_str()));
+                book(zeta, Some(1), Some(zeta_book.as_str()));
+                let alpha = series("alpha", None);
+
+                // "alpha" comes first by name but has no cover at all.
+                let library_id = library(None);
+                for series in [zeta, beta, alpha] {
+                    link(library_id, series);
+                }
+                let own_library = library(Some(library_own.as_str()));
+                link(own_library, zeta);
+                Ok((volume_three, beta, zeta, library_id, own_library))
+            })
+            .unwrap();
+        let member = logged_in(&temp, "bob", "member");
+        let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
+
+        for (uri, expected) in [
+            (format!("/api/v1/covers/book/{volume_three}"), "three.png"),
+            (format!("/api/v1/covers/series/{beta}"), "two.png"),
+            (format!("/api/v1/covers/series/{zeta}"), "zeta-own.png"),
+            (format!("/api/v1/covers/library/{library}"), "two.png"),
+            (
+                format!("/api/v1/covers/library/{own_library}"),
+                "library-own.png",
+            ),
+        ] {
+            let (status, headers, body) = call(&app, authorized("GET", &uri, &member, None)).await;
+            assert_eq!(status, StatusCode::OK, "{uri}");
+            assert_eq!(headers["content-type"], "image/png", "{uri}");
+            assert_eq!(body, expected.as_bytes(), "{uri}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_cover_that_is_not_there_answers_404_json_and_an_unknown_kind_400_json() {
+        let temp = TempDatabase::open();
+        let files = TempDir::new();
+        let gone = files.path().join("gone.png").to_string_lossy().into_owned();
+        let (coverless_book, gone_book, empty_series, empty_library) = temp
+            .db
+            .setup_new_transaction(move |conn| {
+                let add = |sql: &str, params: &[&dyn rusqlite::ToSql]| {
+                    conn.execute(sql, params).unwrap();
+                    conn.last_insert_rowid()
+                };
+                let book = |cover: Option<&str>| {
+                    add(
+                        "INSERT INTO books (title, author, format, language, tags, file_path, \
+                         cover_image) \
+                         VALUES ('Book', 'Unknown Author', 'cbz', 'Unknown', '', ?1, ?2)",
+                        &[&uuid::Uuid::new_v4().to_string(), &cover],
+                    )
+                };
+                let coverless_book = book(None);
+                let gone_book = book(Some(gone.as_str()));
+                let empty_series = add("INSERT INTO series (name) VALUES ('empty')", &[]);
+                let empty_library = add(
+                    "INSERT INTO library (library_name, library_type) VALUES ('empty', 'books')",
+                    &[],
+                );
+                add(
+                    "INSERT INTO library_elements (library_id, series_id) VALUES (?1, ?2)",
+                    &[&empty_library, &empty_series],
+                );
+                Ok((coverless_book, gone_book, empty_series, empty_library))
+            })
+            .unwrap();
+        let member = logged_in(&temp, "bob", "member");
+        let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
+
+        for uri in [
+            format!("/api/v1/covers/book/{coverless_book}"),
+            format!("/api/v1/covers/book/{gone_book}"),
+            "/api/v1/covers/book/999".to_string(),
+            format!("/api/v1/covers/series/{empty_series}"),
+            "/api/v1/covers/series/999".to_string(),
+            format!("/api/v1/covers/library/{empty_library}"),
+            "/api/v1/covers/library/999".to_string(),
+        ] {
+            let (status, _, body) = call(&app, authorized("GET", &uri, &member, None)).await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{uri}");
+            assert_eq!(
+                json(&body),
+                serde_json::json!({ "error": "not_found" }),
+                "{uri}"
+            );
+        }
+
+        for uri in [
+            "/api/v1/covers/author/1",
+            "/api/v1/covers/Book/1",
+            "/api/v1/covers/book/abc",
+        ] {
+            let (status, _, body) = call(&app, authorized("GET", uri, &member, None)).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{uri}");
+            assert_eq!(
+                json(&body),
+                serde_json::json!({ "error": "invalid_request" }),
+                "{uri}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_books_file_streams_and_a_folder_or_a_file_gone_answers_404_json() {
+        let temp = TempDatabase::open();
+        let files = TempDir::new();
+        let path = |relative: &str| files.path().join(relative).to_string_lossy().into_owned();
+        files.write("A Quiet Sea.pdf", b"%PDF-1.7 tiny");
+        files.write("The Long Road/001.png", b"page");
+        let (pdf, folder, gone) = (
+            path("A Quiet Sea.pdf"),
+            path("The Long Road"),
+            path("Gone.pdf"),
+        );
+        let (pdf_book, folder_book, gone_book) = temp
+            .db
+            .setup_new_transaction(move |conn| {
+                let book = |format: &str, file_path: &str| {
+                    conn.execute(
+                        "INSERT INTO books (title, author, format, language, tags, file_path) \
+                         VALUES ('Book', 'Unknown Author', ?1, 'Unknown', '', ?2)",
+                        [format, file_path],
+                    )
+                    .unwrap();
+                    conn.last_insert_rowid()
+                };
+                Ok((
+                    book("pdf", &pdf),
+                    book("image_comic", &folder),
+                    book("pdf", &gone),
+                ))
+            })
+            .unwrap();
+        let member = logged_in(&temp, "bob", "member");
+        let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
+
+        let uri = format!("/api/v1/books/{pdf_book}/file");
+        let (status, headers, body) = call(&app, authorized("GET", &uri, &member, None)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(headers["content-type"], "application/pdf");
+        assert_eq!(body, b"%PDF-1.7 tiny");
+
+        // An image-folder book's stored path is its folder.
+        for book in [folder_book, gone_book] {
+            let uri = format!("/api/v1/books/{book}/file");
+            let (status, _, body) = call(&app, authorized("GET", &uri, &member, None)).await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{uri}");
+            assert_eq!(
+                json(&body),
+                serde_json::json!({ "error": "not_found" }),
+                "{uri}"
+            );
+        }
     }
 
     #[tokio::test]

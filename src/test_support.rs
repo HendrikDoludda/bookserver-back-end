@@ -195,6 +195,36 @@ impl TempDatabase {
     }
 }
 
+/// A folder path under the system temp directory, unique to the test, deleted with everything in
+/// it when dropped. Nothing exists there until something is written into it.
+pub struct TempDir(PathBuf);
+
+impl TempDir {
+    pub fn new() -> Self {
+        TempDir(std::env::temp_dir().join(format!("bookserver-test-{}", Uuid::new_v4())))
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.0
+    }
+
+    /// Writes `contents` to `relative` inside the folder, making the folders on the way; answers
+    /// the file's path.
+    pub fn write(&self, relative: &str, contents: &[u8]) -> PathBuf {
+        let path = self.0.join(relative);
+        let parent = path.parent().expect("a file has a folder");
+        fs::create_dir_all(parent).expect("make the folders");
+        fs::write(&path, contents).expect("write the file");
+        path
+    }
+}
+
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
 struct TempFile(PathBuf);
 
 impl Drop for TempFile {

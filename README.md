@@ -139,6 +139,7 @@ Every endpoint except `/health`, `/api/v1/auth/…` and the two `/api/v1/locales
 | `GET` | `/api/v1/series/{id}/books` | Books in a series |
 | `GET` | `/api/v1/books/{id}` | One book's metadata |
 | `GET` | `/api/v1/books/{id}/file` | Stream the book file (supports `Range`) |
+| `GET` | `/api/v1/covers/{kind}/{id}` | The cover of a `book`, `series` or `library`; a series or library without its own shows its first book's, in reading order; `404 not_found` when there is none |
 | `POST` | `/api/v1/scan` | Scan `BOOK_DIRS` and catalog new files |
 | `DELETE` | `/api/v1/libraries/{id}` | Delete a library |
 | `POST` | `/api/v1/auth/register` | Sign up; the first account sends the setup code from the server log and becomes admin. An optional `locale` from `GET /api/v1/locales` becomes the account's language setting, which its mails are written in (`400 invalid_locale` for one the server doesn't offer). Answers the login tokens, or `202` when the account must first confirm its email — within 48 hours, or a later sign-up deletes it |

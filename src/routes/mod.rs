@@ -2,6 +2,7 @@ pub mod account_management;
 pub mod api_caller;
 pub mod api_routes;
 pub mod auth;
+pub mod covers;
 pub mod email_codes;
 pub mod email_helper;
 pub mod login;

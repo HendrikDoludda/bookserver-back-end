@@ -7,12 +7,12 @@
 - `src/app_state.rs` — `AppState`, the router state (database, mailer, setup code, TOTP cipher); handlers take their part through `FromRef` (`State<Arc<Database>>`, `State<Mailer>`, `State<SetupCode>`, `State<TotpCipher>`).
 - `src/routes/api_routes.rs` — the route table (`set_up_routes`) and `start_server`.
 - `src/routes/api_caller/` — the handlers, one file per area (`authentication.rs`, `account.rs`, `settings.rs`, `totp.rs`, `library.rs`, `users.rs`, `locales.rs`); `extractors.rs` holds the request extractors — the session ones (`AuthSession`, `AdminSession`, `AuthTOTPLoginSession`, `AuthRefreshSession`) and `JsonBody` / `PathParams` / `QueryParams`, and `helpers.rs` the shared response builders: `ping_server` (the liveness check), `not_implemented` (every route without a handler yet) and the router's fallbacks `not_found` / `method_not_allowed`.
-- `src/routes/auth.rs` — account, password and session building blocks, including the checks a new username, email or password passes; `login.rs` — login, refresh and logout; `registration.rs` — sign-up and email verification; `password_reset.rs` — the reset flow; `account_management.rs` — changes users make to their own account; `email_codes.rs` — the emailed codes of sign-up, reset and the email change: making them, mailing them within the limits, checking them; `totp_management.rs` — TOTP two-factor and recovery codes; `totp_cipher.rs` — `TotpCipher`, which encrypts TOTP secrets at rest; `email_helper.rs` — `Mailer`, the one sender every email goes through; `user_management.rs` — an admin's view of the accounts: listing them, changing a role, marking an email verified; `user_settings.rs` — a user's own settings: reading them, and replacing them once each value passes its check; `translations.rs` — the catalog as the apps read it: the languages on offer, and a language's texts with the English fallback.
+- `src/routes/auth.rs` — account, password and session building blocks, including the checks a new username, email or password passes; `login.rs` — login, refresh and logout; `registration.rs` — sign-up and email verification; `password_reset.rs` — the reset flow; `account_management.rs` — changes users make to their own account; `email_codes.rs` — the emailed codes of sign-up, reset and the email change: making them, mailing them within the limits, checking them; `totp_management.rs` — TOTP two-factor and recovery codes; `totp_cipher.rs` — `TotpCipher`, which encrypts TOTP secrets at rest; `email_helper.rs` — `Mailer`, the one sender every email goes through; `user_management.rs` — an admin's view of the accounts: listing them, changing a role, marking an email verified; `user_settings.rs` — a user's own settings: reading them, and replacing them once each value passes its check; `translations.rs` — the catalog as the apps read it: the languages on offer, and a language's texts with the English fallback; `covers.rs` — which cover file a book, a series or a library shows.
 - `src/database_related_scripts/` — `db.rs` (`Database`: the r2d2 pool and every DB operation), one file per operation trait, `db_email_codes.rs` / `db_login_challenges.rs` / `db_login_throttle.rs` (one table each), `db_users.rs` (the user queries the traits can't express, and how a `Role` is stored), `db_translations.rs` (the translation catalog's three tables, and how an `Audience` is stored), `migrations.rs`, `translation_seed.rs` (checks the shipped translations and syncs them into the catalog at every start).
 - `src/data_models/` — `models.rs` (domain structs, `*DatabaseColumns` enums, `WithId<T>`) and the request/response bodies.
 - `src/error_types.rs` — the typed error enums, one per domain.
 - `src/scanner/` — `folder_scanner.rs` (walks the book folders, parses filenames), `cover_image_retriever.rs` (one cover per format), `metadata_fetcher.rs` (placeholder).
-- `src/stream_reader.rs` — file serving with HTTP range support.
+- `src/stream_reader.rs` — `serve_file`: a file on disk, with HTTP range support.
 - `src/test_support.rs` — shared test fixtures, compiled only for tests.
 - `migrations/` — numbered SQL files, embedded at compile time.
 - `translations/` — the shipped translations, embedded at compile time: `<language>/language.json`, and one JSON file per namespace under `frontend/` (sent to the apps) or `backend/` (rendered by the server).
@@ -59,7 +59,7 @@
 
 ## Files
 - Files are served by row id, never by a path the client supplies.
-- Files are served through `tower_http::services::ServeFile` (Range, 206, `If-Range` and `HEAD` included) — never hand-rolled range handling.
+- Files are served through `serve_file` (`stream_reader.rs`): `tower_http`'s `ServeFile` — Range, 206, `If-Range` and `HEAD` included — once the path is checked to be a file, so a missing file or a folder answers the JSON `not_found`. Never hand-rolled range handling.
 - A filesystem path built from request input is sanitised, canonicalised and checked to lie inside a scannable root before it is read or written.
 - Blocking work — PDFium, `zip`, `image`, hashing — runs in `spawn_blocking`, never directly in an async handler.
 
@@ -89,6 +89,7 @@
 - A test lives in a `#[cfg(test)] mod tests` at the bottom of the file it tests; shared fixtures live in `src/test_support.rs`.
 - A database test runs on `memory_connection()`: in-memory, configured, migrated and synced with the shipped translations, fresh for every test. A test of the schema or of the sync itself uses `migrated_connection()`, whose tables are empty.
 - A test that needs the pool or the router uses `TempDatabase` — never a plain `:memory:` path, which gives every pooled connection its own empty database.
+- A test that needs files on disk writes them into a `TempDir`, which deletes its folder when dropped.
 - Router tests send requests with `tower::ServiceExt::oneshot` and read bodies with `axum::body::to_bytes`.
 - Fixtures insert rows with plain SQL, so they don't depend on the model code under test.
 - Logic that depends on the time takes `now` as a parameter, so tests never sleep.
