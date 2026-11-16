@@ -8,7 +8,8 @@ frontend and the admin view. Only deleting a library exists today.
 
 ## Build
 - [ ] 3 h · Create a library and assign existing series to it: `POST /libraries`, which answers 501 until then [BE]
-- [ ] 2 h · Edit a library's name, type and description: `PATCH /libraries/{id}`, which answers 501 until then [BE]
+- [ ] 0.5 h · Send `library_type` in snake_case (`books`), like every other enum — the library JSON sends the Rust variant name `"Books"` today [BE]
+- [ ] 2 h · Edit a library's name, type and description: `PATCH /libraries/{id}`, which answers 501 until then; it takes the type in the snake_case values the JSON sends [BE]
 - [ ] 2 h · Edit a series' name, description and release years: `PATCH /series/{id}` — no route exists [BE]
 - [ ] 1 h · Delete a series: `DELETE /series/{id}` — no route exists [BE]
 - [ ] 2 h · Make deleting a library follow the library-delete decision — today its `library_elements` rows cascade away, but `books.series` has no foreign key, so its series and books are left behind [DB] [BE]

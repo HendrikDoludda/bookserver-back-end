@@ -16,7 +16,7 @@
 | Recovery codes | 1 | completed | [50-recovery-codes](features/50-recovery-codes.md) |
 | Translation catalog (i18n) | F0 | completed | [13-internationalization](features/13-internationalization.md) |
 | Reading files | F1 | in progress | [38-reading-files](features/38-reading-files.md) |
-| Browsing | F1 | not started | [43-browsing](features/43-browsing.md) |
+| Browsing | F1 | in progress | [43-browsing](features/43-browsing.md) |
 | Frontend localization | F1 | in progress | [57-frontend-localization](features/57-frontend-localization.md) |
 | Account screens | F1 | in progress | [58-account-screens](features/58-account-screens.md) |
 | Flutter app | F1 | in progress | [73-flutter-app](features/73-flutter-app.md) |

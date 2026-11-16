@@ -10,6 +10,7 @@ checks that each file is still there.
 - [ ] ? h · Reconciliation pass over the `books` rows, checking that each `file_path` still exists — a separate pass, not a change to `create_book_entry` [BE]
 - [ ] ? h · Find a moved file again by its `file_hash` and update its row, instead of deleting and re-inserting it [BE]
 - [ ] ? h · Handle a file that is gone, per the prune-or-flag decision [DB] [BE]
+- [ ] ? h · Delete the files in `cover_images/` that no book, series or library row names, except the `example-cover.png` fallback — today a cover outlives its book [BE]
 
 ## Open decisions
 - [ ] Delete the rows of missing files, or flag them? — blocks: handling a file that is gone. Suggested: flag — an unplugged drive would otherwise empty the catalog.
