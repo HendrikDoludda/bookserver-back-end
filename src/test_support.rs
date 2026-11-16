@@ -9,6 +9,7 @@ use std::{
 
 use rusqlite::{params, Connection};
 use uuid::Uuid;
+use zip::{write::SimpleFileOptions, ZipWriter};
 
 use crate::{
     app_state::AppState,
@@ -215,6 +216,27 @@ impl TempDir {
         let parent = path.parent().expect("a file has a folder");
         fs::create_dir_all(parent).expect("make the folders");
         fs::write(&path, contents).expect("write the file");
+        path
+    }
+
+    /// Writes a CBZ to `relative` inside the folder, holding `entries` in this order; an entry
+    /// name ending in `/` is a folder entry. Answers the archive's path.
+    pub fn write_cbz(&self, relative: &str, entries: &[(&str, &[u8])]) -> PathBuf {
+        let path = self.write(relative, b"");
+        let mut archive = ZipWriter::new(fs::File::create(&path).expect("create the archive"));
+        for (name, contents) in entries {
+            if name.ends_with('/') {
+                archive
+                    .add_directory(*name, SimpleFileOptions::default())
+                    .expect("add a folder entry");
+            } else {
+                archive
+                    .start_file(*name, SimpleFileOptions::default())
+                    .expect("start an entry");
+                archive.write_all(contents).expect("write an entry");
+            }
+        }
+        archive.finish().expect("finish the archive");
         path
     }
 }

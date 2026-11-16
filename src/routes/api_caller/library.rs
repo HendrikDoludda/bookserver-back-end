@@ -8,15 +8,16 @@ use std::{path::Path, sync::Arc};
 use axum::{
     body::Body,
     extract::State,
-    http::{Request, Response, StatusCode},
+    http::{header, Request, Response, StatusCode},
     response::IntoResponse,
     Json,
 };
 
 use crate::{
-    data_models::books_model::BookSummary,
+    book_pages::{self, PageContent},
+    data_models::books_model::{BookSummary, PageSummary},
     db::Database,
-    error_types::{internal_error_response, AppErrors, DatabaseError},
+    error_types::{internal_error_response, AppErrors, DatabaseError, PageError},
     folder_scanner::scan_all_folders,
     models::{BookMetadata, BookSeriesMetadata, DatabaseTypes, LibraryMetadata, WithId},
     routes::covers::{self, CoverKind},
@@ -89,11 +90,49 @@ pub async fn request_file(
     PathParams(id): PathParams<i64>,
     request: Request<Body>,
 ) -> Result<Response<Body>, AppErrors> {
-    // TODO: also serve partial books, and folders of images (e.g. an unzipped CBZ). Image
-    // comics will likely need page heights pre-calculated so the reader can lay them out
-    // correctly.
+    // TODO: also serve partial books.
     let book = read_book(db, id).await?;
     Ok(serve_file(Path::new(&book.file_path), request).await)
+}
+
+/// List the pages of an image-folder or CBZ book, numbered from 1.
+pub async fn get_pages(
+    _session: AuthSession,
+    State(db): State<Arc<Database>>,
+    PathParams(id): PathParams<i64>,
+) -> Result<Json<Vec<PageSummary>>, AppErrors> {
+    // TODO: each page's width and height, so the reader can lay pages out before they load.
+    let book = read_book(db, id).await?;
+    let count =
+        blocking(move || book_pages::page_count(&book.format, Path::new(&book.file_path))).await?;
+    Ok(Json(
+        (1..=count).map(|number| PageSummary { number }).collect(),
+    ))
+}
+
+/// Serve one page of an image-folder or CBZ book; pages are numbered from 1.
+pub async fn get_page(
+    _session: AuthSession,
+    State(db): State<Arc<Database>>,
+    PathParams((id, number)): PathParams<(i64, usize)>,
+    request: Request<Body>,
+) -> Result<Response<Body>, AppErrors> {
+    let book = read_book(db, id).await?;
+    let page = blocking(move || {
+        book_pages::page(
+            &book.format,
+            Path::new(&book.file_path),
+            number,
+            book_pages::MAX_PAGE_BYTES,
+        )
+    })
+    .await?;
+    Ok(match page {
+        PageContent::File(path) => serve_file(&path, request).await,
+        PageContent::Bytes { bytes, media_type } => {
+            ([(header::CONTENT_TYPE, media_type)], bytes).into_response()
+        }
+    })
 }
 
 /// Return a single book's metadata without streaming the file itself.
@@ -158,4 +197,15 @@ async fn read_book(db: Arc<Database>, id: i64) -> Result<BookMetadata, AppErrors
         )?)
     })
     .await
+}
+
+/// Runs a book's file or archive reading on Tokio's blocking pool.
+async fn blocking<T, F>(work: F) -> Result<T, PageError>
+where
+    F: FnOnce() -> Result<T, PageError> + Send + 'static,
+    T: Send + 'static,
+{
+    tokio::task::spawn_blocking(work)
+        .await
+        .map_err(|_| PageError::TaskFailed)?
 }

@@ -460,6 +460,7 @@ mod tests {
             Err(AppErrors::Email(_)) => "email error",
             Err(AppErrors::Settings(_)) => "settings error",
             Err(AppErrors::Translation(_)) => "translation error",
+            Err(AppErrors::Pages(_)) => "pages error",
             Err(AppErrors::Database(_)) => "database error",
             Err(AppErrors::InvalidRequest) => "invalid request",
         }

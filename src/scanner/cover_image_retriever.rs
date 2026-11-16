@@ -1,14 +1,10 @@
 use epub_parser::Epub;
 use image::ImageFormat;
-use natord::compare;
 use pdfium_render::prelude::*;
 use std::fs;
-use std::fs::File;
-use std::io::Read;
 use std::path::{Path, PathBuf};
-use zip::ZipArchive;
 
-use crate::{data_models::models::BookFormat, error_types::CoverImageError};
+use crate::{book_pages, data_models::models::BookFormat, error_types::CoverImageError};
 
 const COVER_DIR: &str = "./cover_images/";
 const DEFAULT_IMAGE: &str = "example-cover.png";
@@ -34,34 +30,7 @@ fn get_fallback_cover() -> PathBuf {
 }
 
 fn get_cbz_cover_image(path: &Path, hash: &str) -> Result<PathBuf, CoverImageError> {
-    let cbz = File::open(path).map_err(|_| CoverImageError::FileCouldNotBeRead)?;
-    let mut archive = ZipArchive::new(cbz).map_err(|_| CoverImageError::ZipArchiveFailure)?;
-
-    let first_name = archive
-        .file_names()
-        .filter_map(|name| {
-            let lower = name.to_ascii_lowercase();
-            if lower.ends_with(".jpg")
-                || lower.ends_with(".jpeg")
-                || lower.ends_with(".png")
-                || lower.ends_with(".webp")
-            {
-                Some((lower, name))
-            } else {
-                None
-            }
-        })
-        .min_by(|a, b| a.0.cmp(&b.0))
-        .map(|(_, original)| original.to_string())
-        .ok_or(CoverImageError::SortingFailed)?;
-
-    let mut file = archive
-        .by_name(&first_name)
-        .map_err(|_| CoverImageError::InvalidFileName)?;
-
-    let mut image_data = Vec::new();
-    file.read_to_end(&mut image_data)
-        .map_err(|_| CoverImageError::PageToImageConversionFailed)?;
+    let (image_data, _) = book_pages::archive_page(path, 1, book_pages::MAX_PAGE_BYTES)?;
 
     let format =
         image::guess_format(&image_data).map_err(|_| CoverImageError::ImageFormatFailed)?;
@@ -142,18 +111,7 @@ fn get_epub_cover_image(path: &Path, hash: &str) -> Result<PathBuf, CoverImageEr
 }
 
 fn get_image_comic_cover_image(path: &Path, hash: &str) -> Result<PathBuf, CoverImageError> {
-    let first = fs::read_dir(path)
-        .map_err(|_| CoverImageError::GeneralError)?
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .filter(|p| is_image_file(p))
-        .min_by(|a, b| {
-            compare(
-                a.file_name().and_then(|n| n.to_str()).unwrap_or_default(),
-                b.file_name().and_then(|n| n.to_str()).unwrap_or_default(),
-            )
-        })
-        .ok_or(CoverImageError::FileNotFound)?;
+    let first = book_pages::folder_page(path, 1)?;
 
     let extension = first
         .extension()
@@ -169,15 +127,6 @@ fn get_image_comic_cover_image(path: &Path, hash: &str) -> Result<PathBuf, Cover
     let result = copy_image_to_cover_location(first.as_path(), final_path.as_path())?;
 
     Ok(result)
-}
-
-fn is_image_file(path: &Path) -> bool {
-    matches!(
-        path.extension()
-            .and_then(|ext| ext.to_str())
-            .map(|ext| ext.to_ascii_lowercase()),
-        Some(ref ext) if matches!(ext.as_str(), "jpg" | "jpeg" | "png" | "webp")
-    )
 }
 
 fn create_image_at_location(path: &Path, data: &[u8]) -> Result<PathBuf, CoverImageError> {

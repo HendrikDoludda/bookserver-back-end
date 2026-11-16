@@ -18,8 +18,8 @@ use crate::{
         },
         helpers::{method_not_allowed, not_found, not_implemented, ping_server},
         library::{
-            delete_library, get_cover, get_libraries, get_series_children, get_series_in_library,
-            request_file, retrieve_metadata, scan_all_directories,
+            delete_library, get_cover, get_libraries, get_page, get_pages, get_series_children,
+            get_series_in_library, request_file, retrieve_metadata, scan_all_directories,
         },
         locales::{get_translations, list_locales},
         settings::{get_settings, replace_settings},
@@ -60,6 +60,8 @@ pub fn set_up_routes() -> Router<AppState> {
         .route("/series/{id}/books", get(get_series_children))
         .route("/books/{id}", get(retrieve_metadata))
         .route("/books/{id}/file", get(request_file))
+        .route("/books/{id}/pages", get(get_pages))
+        .route("/books/{id}/pages/{number}", get(get_page))
         .route(
             "/books/{id}/progress",
             get(not_implemented).patch(not_implemented),
@@ -765,6 +767,151 @@ mod tests {
         }
     }
 
+    /// A book of `format` at `file_path`, written with plain SQL; answers its id.
+    fn insert_book_file(conn: &rusqlite::Connection, format: &str, file_path: &str) -> i64 {
+        conn.execute(
+            "INSERT INTO books (title, author, format, language, tags, file_path) \
+             VALUES ('Book', 'Unknown Author', ?1, 'Unknown', '', ?2)",
+            [format, file_path],
+        )
+        .unwrap();
+        conn.last_insert_rowid()
+    }
+
+    #[tokio::test]
+    async fn the_pages_of_an_image_folder_and_a_cbz_are_listed_and_served_in_natural_order() {
+        let temp = TempDatabase::open();
+        let files = TempDir::new();
+        for (name, contents) in [("10.png", "ten"), ("2.png", "two"), ("1.png", "one")] {
+            files.write(&format!("The Long Road/{name}"), contents.as_bytes());
+        }
+        let cbz = files.write_cbz(
+            "A Quiet Sea.cbz",
+            &[("p10.webp", b"ten"), ("p2.jpg", b"two")],
+        );
+        let folder = files.path().join("The Long Road");
+        let (folder, cbz) = (
+            folder.to_string_lossy().into_owned(),
+            cbz.to_string_lossy().into_owned(),
+        );
+        let (folder_book, cbz_book) = temp
+            .db
+            .setup_new_transaction(move |conn| {
+                Ok((
+                    insert_book_file(conn, "image_comic", &folder),
+                    insert_book_file(conn, "cbz", &cbz),
+                ))
+            })
+            .unwrap();
+        let member = logged_in(&temp, "bob", "member");
+        let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
+
+        for (book, count) in [(folder_book, 3), (cbz_book, 2)] {
+            let uri = format!("/api/v1/books/{book}/pages");
+            let (status, _, body) = call(&app, authorized("GET", &uri, &member, None)).await;
+            assert_eq!(status, StatusCode::OK, "{uri}");
+            let numbers: Vec<serde_json::Value> = (1..=count)
+                .map(|number| serde_json::json!({ "number": number }))
+                .collect();
+            assert_eq!(json(&body), serde_json::Value::Array(numbers), "{uri}");
+        }
+
+        for (book, number, content_type, contents) in [
+            (folder_book, 1, "image/png", "one"),
+            (folder_book, 3, "image/png", "ten"),
+            (cbz_book, 1, "image/jpeg", "two"),
+            (cbz_book, 2, "image/webp", "ten"),
+        ] {
+            let uri = format!("/api/v1/books/{book}/pages/{number}");
+            let (status, headers, body) = call(&app, authorized("GET", &uri, &member, None)).await;
+            assert_eq!(status, StatusCode::OK, "{uri}");
+            assert_eq!(headers["content-type"], content_type, "{uri}");
+            assert_eq!(body, contents.as_bytes(), "{uri}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_page_that_is_not_there_answers_404_json_and_a_broken_archive_500_json() {
+        let temp = TempDatabase::open();
+        let files = TempDir::new();
+        let path = |relative: &str| files.path().join(relative).to_string_lossy().into_owned();
+        files.write("The Long Road/1.png", b"one");
+        files.write("A Quiet Sea.pdf", b"%PDF-1.7");
+        files.write("Broken.cbz", b"Rar! renamed to cbz");
+        let (folder, pdf, broken, gone) = (
+            path("The Long Road"),
+            path("A Quiet Sea.pdf"),
+            path("Broken.cbz"),
+            path("Gone"),
+        );
+        let (folder_book, pdf_book, broken_book, gone_book) = temp
+            .db
+            .setup_new_transaction(move |conn| {
+                Ok((
+                    insert_book_file(conn, "image_comic", &folder),
+                    insert_book_file(conn, "pdf", &pdf),
+                    insert_book_file(conn, "cbz", &broken),
+                    insert_book_file(conn, "image_comic", &gone),
+                ))
+            })
+            .unwrap();
+        let member = logged_in(&temp, "bob", "member");
+        let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
+        let answer = |status: StatusCode, key: &str| (status, serde_json::json!({ "error": key }));
+
+        let cases = [
+            (
+                format!("/api/v1/books/{folder_book}/pages/0"),
+                answer(StatusCode::NOT_FOUND, "not_found"),
+            ),
+            (
+                format!("/api/v1/books/{folder_book}/pages/2"),
+                answer(StatusCode::NOT_FOUND, "not_found"),
+            ),
+            (
+                format!("/api/v1/books/{pdf_book}/pages"),
+                answer(StatusCode::NOT_FOUND, "not_found"),
+            ),
+            (
+                format!("/api/v1/books/{pdf_book}/pages/1"),
+                answer(StatusCode::NOT_FOUND, "not_found"),
+            ),
+            (
+                format!("/api/v1/books/{gone_book}/pages"),
+                answer(StatusCode::NOT_FOUND, "not_found"),
+            ),
+            (
+                "/api/v1/books/999/pages".to_string(),
+                answer(StatusCode::NOT_FOUND, "not_found"),
+            ),
+            (
+                "/api/v1/books/999/pages/1".to_string(),
+                answer(StatusCode::NOT_FOUND, "not_found"),
+            ),
+            (
+                format!("/api/v1/books/{folder_book}/pages/abc"),
+                answer(StatusCode::BAD_REQUEST, "invalid_request"),
+            ),
+            (
+                format!("/api/v1/books/{folder_book}/pages/-1"),
+                answer(StatusCode::BAD_REQUEST, "invalid_request"),
+            ),
+            (
+                format!("/api/v1/books/{broken_book}/pages"),
+                answer(StatusCode::INTERNAL_SERVER_ERROR, "internal_error"),
+            ),
+            (
+                format!("/api/v1/books/{broken_book}/pages/1"),
+                answer(StatusCode::INTERNAL_SERVER_ERROR, "internal_error"),
+            ),
+        ];
+        for (uri, (expected_status, expected_body)) in cases {
+            let (status, _, body) = call(&app, authorized("GET", &uri, &member, None)).await;
+            assert_eq!(status, expected_status, "{uri}");
+            assert_eq!(json(&body), expected_body, "{uri}");
+        }
+    }
+
     #[tokio::test]
     async fn a_body_that_cannot_be_read_answers_400_json() {
         let temp = TempDatabase::open();
@@ -1437,6 +1584,8 @@ mod tests {
         ("GET", "/api/v1/series/1/books"),
         ("GET", "/api/v1/books/1"),
         ("GET", "/api/v1/books/1/file"),
+        ("GET", "/api/v1/books/1/pages"),
+        ("GET", "/api/v1/books/1/pages/1"),
         ("GET", "/api/v1/books/1/progress"),
         ("PATCH", "/api/v1/books/1/progress"),
         ("GET", "/api/v1/covers/book/1"),

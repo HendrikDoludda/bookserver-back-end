@@ -13,6 +13,7 @@
 - `src/error_types.rs` — the typed error enums, one per domain.
 - `src/scanner/` — `folder_scanner.rs` (walks the book folders, parses filenames), `cover_image_retriever.rs` (one cover per format), `metadata_fetcher.rs` (placeholder).
 - `src/stream_reader.rs` — `serve_file`: a file on disk, with HTTP range support.
+- `src/book_pages.rs` — the pages of an image-folder or CBZ book, in natural order and numbered from 1: the one listing behind the page routes and the cover picker.
 - `src/test_support.rs` — shared test fixtures, compiled only for tests.
 - `migrations/` — numbered SQL files, embedded at compile time.
 - `translations/` — the shipped translations, embedded at compile time: `<language>/language.json`, and one JSON file per namespace under `frontend/` (sent to the apps) or `backend/` (rendered by the server).
@@ -60,6 +61,7 @@
 ## Files
 - Files are served by row id, never by a path the client supplies.
 - Files are served through `serve_file` (`stream_reader.rs`): `tower_http`'s `ServeFile` — Range, 206, `If-Range` and `HEAD` included — once the path is checked to be a file, so a missing file or a folder answers the JSON `not_found`. Never hand-rolled range handling.
+- A page inside an archive is read whole, in `spawn_blocking` and up to `MAX_PAGE_BYTES`, and sent with its media type; `serve_file` is for files on disk.
 - A filesystem path built from request input is sanitised, canonicalised and checked to lie inside a scannable root before it is read or written.
 - Blocking work — PDFium, `zip`, `image`, hashing — runs in `spawn_blocking`, never directly in an async handler.
 

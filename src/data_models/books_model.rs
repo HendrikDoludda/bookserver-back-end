@@ -23,6 +23,13 @@ pub struct BookSummary {
     pub file_size: Option<u64>,
 }
 
+/// One entry of a book's page list.
+#[derive(Debug, Serialize)]
+pub struct PageSummary {
+    /// Counted from 1, as `GET /books/{id}/pages/{number}` takes it.
+    pub number: usize,
+}
+
 impl From<BookMetadata> for BookSummary {
     fn from(book: BookMetadata) -> Self {
         let language = if book.language.is_unknown() {

@@ -139,6 +139,8 @@ Every endpoint except `/health`, `/api/v1/auth/…` and the two `/api/v1/locales
 | `GET` | `/api/v1/series/{id}/books` | Books in a series |
 | `GET` | `/api/v1/books/{id}` | One book's metadata |
 | `GET` | `/api/v1/books/{id}/file` | Stream the book file (supports `Range`) |
+| `GET` | `/api/v1/books/{id}/pages` | The pages of an image-folder or CBZ book, `[{"number": 1}, …]`, in natural order of their file names; `404 not_found` for other formats |
+| `GET` | `/api/v1/books/{id}/pages/{number}` | One page's image, counted from 1 |
 | `GET` | `/api/v1/covers/{kind}/{id}` | The cover of a `book`, `series` or `library`; a series or library without its own shows its first book's, in reading order; `404 not_found` when there is none |
 | `POST` | `/api/v1/scan` | Scan `BOOK_DIRS` and catalog new files |
 | `DELETE` | `/api/v1/libraries/{id}` | Delete a library |

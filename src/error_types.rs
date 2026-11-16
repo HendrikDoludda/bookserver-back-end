@@ -165,29 +165,59 @@ pub enum CoverImageError {
     #[error("failed creating the cover")]
     CoverCreationFailed,
 
-    #[error("Invalid File Name")]
-    InvalidFileName,
-
-    #[error("File Reading Failed")]
-    FileCouldNotBeRead,
-
     #[error("Page Retrieval failed")]
     PageCouldNotBeRetrieved,
 
     #[error("Could Not convert the page to image")]
     PageToImageConversionFailed,
 
-    #[error("Zip Archive tool failed in initializing")]
-    ZipArchiveFailure,
-
-    #[error("The page sorter failed")]
-    SortingFailed,
-
     #[error("System failed to identify the type of image that has been retrieved")]
     ImageFormatFailed,
 
     #[error("System failed to create a document from pdf")]
     PdfToDocumentError,
+
+    #[error(transparent)]
+    Pages(#[from] PageError),
+}
+
+/// Reading the pages of an image-folder or CBZ book.
+#[derive(Error, Debug)]
+pub enum PageError {
+    #[error("the book is not an image folder or a CBZ")]
+    NotAnImageBook,
+
+    #[error("the book has no page with this number")]
+    NoSuchPage,
+
+    #[error("the book's folder or archive is gone")]
+    BookMissing,
+
+    #[error("reading the book's folder or archive failed: {0}")]
+    Unreadable(std::io::Error),
+
+    #[error("the book's archive can't be read: {0}")]
+    Archive(zip::result::ZipError),
+
+    #[error("page {name} is larger than {max_bytes} bytes")]
+    PageTooLarge { name: String, max_bytes: u64 },
+
+    #[error("the page-reading task did not finish")]
+    TaskFailed,
+}
+
+impl PageError {
+    fn status_and_key(&self) -> (StatusCode, &'static str) {
+        match self {
+            PageError::NotAnImageBook | PageError::NoSuchPage | PageError::BookMissing => {
+                (StatusCode::NOT_FOUND, "not_found")
+            }
+            PageError::Unreadable(_)
+            | PageError::Archive(_)
+            | PageError::PageTooLarge { .. }
+            | PageError::TaskFailed => INTERNAL,
+        }
+    }
 }
 
 #[derive(Error, Debug, Clone)]
@@ -442,6 +472,8 @@ pub enum AppErrors {
     Settings(#[from] SettingsError),
     #[error(transparent)]
     Translation(#[from] TranslationError),
+    #[error(transparent)]
+    Pages(#[from] PageError),
     #[error("The request's body, path or query could not be read")]
     InvalidRequest,
 }
@@ -454,6 +486,7 @@ impl AppErrors {
             AppErrors::Email(err) => err.status_and_key(),
             AppErrors::Settings(err) => err.status_and_key(),
             AppErrors::Translation(err) => err.status_and_key(),
+            AppErrors::Pages(err) => err.status_and_key(),
             AppErrors::InvalidRequest => (StatusCode::BAD_REQUEST, "invalid_request"),
         }
     }
