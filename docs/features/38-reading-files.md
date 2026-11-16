@@ -13,7 +13,7 @@ EPUB and CBZ files stream; image-folder and CBZ books are also served page by pa
 - [x] 2 h · Serve CBZ books page by page through the same two routes: the archive's image entries (`__MACOSX/` and names starting with `.` skipped) in the same order, each read whole in `spawn_blocking` up to a size cap and sent with its media type. The CBZ cover picker takes this listing's first page instead of the first entry in plain alphabetical order (`img10.jpg` before `img2.jpg`) [BE]
 - [ ] 2 h · Give the reader each page's dimensions in the page list, so it can lay pages out before they load (TODO in `get_pages`) [BE]
 - [ ] 0.5 h · Delete the unused `StreamReaderErrors` and `convert_file_path_to_blob` — leftovers from a hand-rolled range reader that `ServeFile` replaced [BE]
-- [ ] 0.5 h · Texts for the readers in a `reader` namespace — opening, failures, retry, "Page {page} of {count}" — in `translations/en/frontend/` and `translations/de/frontend/` [BE]
+- [x] 0.5 h · Texts for the readers in a `reader` namespace — opening, failures, retry, "Page {page} of {count}" — in `translations/en/frontend/` and `translations/de/frontend/` [BE]
 - [ ] 2 h · Download a book's file through the session (`ApiClient.download`): streamed into a fresh temp file, the timeout covering the wait for the answer and each gap between chunks but not the whole download, the partial file deleted on failure; the reader deletes the file when it closes [FE]
 - [ ] 5 h · Image-page reader for CBZ and image-folder books: the pages from the page list in a `PageView`, turned by swipe and the arrow keys, zoomable, the next page preloaded, each page decoded at most at twice the screen's pixel width [FE]
 - [ ] 3 h · PDF reader: the downloaded file in pdfrx's `PdfViewer.file` [FE]

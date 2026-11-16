@@ -1,0 +1,8 @@
+{
+  "open_failed": "Dieses Buch lässt sich nicht öffnen.",
+  "opening": "Das Buch wird geöffnet …",
+  "page_failed": "Diese Seite konnte nicht geladen werden.",
+  "page_of": "Seite {page} von {count}",
+  "retry": "Erneut versuchen",
+  "unsupported": "Diese Art von Buch kann die App noch nicht anzeigen."
+}
