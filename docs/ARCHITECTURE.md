@@ -85,7 +85,7 @@
 - Times are stored as `INTEGER` unix seconds and read with `read_time` (must have a value — NULL is an error naming the column) or `read_optional_time` (NULL is `None`).
 - A column is nullable exactly when its Rust field is an `Option`.
 - Back up SQLite with `VACUUM INTO`, never by copying the file — under WAL a plain copy is not a valid backup.
-- Schema changes: a new numbered `.sql` in `migrations/`, registered in `MIGRATIONS`; an applied migration is never edited. Early-development exception: migration 0001 is edited in place and the database wiped.
+- Schema changes: a new numbered `.sql` in `migrations/`, registered in `MIGRATIONS`; an applied migration is never edited.
 
 ## Tests
 - A test lives in a `#[cfg(test)] mod tests` at the bottom of the file it tests; shared fixtures live in `src/test_support.rs`.
