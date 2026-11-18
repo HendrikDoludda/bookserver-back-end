@@ -9,7 +9,7 @@ so adding a language later is catalog data instead of a rework. The client fetch
 ## Build
 - [x] 2 h · `context.t("namespace.key")` lookup for every UI string, from the first screen on [FE]
 - [x] 1 h · Interpolation: `context.t("key", {"name": value})` fills each `{name}` placeholder, matched by the backend's pattern (`{[a-z0-9_]+}`); a value not given leaves its placeholder visible [FE]
-- [ ] 1 h · Plural forms — one key per form (`unread.one` / `unread.other`), picked with the language's plural rules, `.other` when a form is missing [FE]
+- [x] 1 h · Plural forms — one key per form (`unread.one` / `unread.other`), picked with the language's plural rules, `.other` when a form is missing [FE]
 - [ ] ? h · The seed accepts the plural forms a language has beyond English's — `zero`, `two`, `few`, `many` — next to a key English writes as `.one` / `.other`, with English `.other`'s placeholders; today it stops the server on any key English lacks [BE]
 - [ ] 3 h · Load the catalog at runtime into a lookup map — most i18n libraries expect files at build time, so check remote-loading support (especially on Flutter) [FE]
 - [x] 1 h · Ship the English catalog built into the app, so a cold or offline start still renders [FE]
