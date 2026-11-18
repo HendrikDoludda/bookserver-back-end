@@ -22,6 +22,8 @@
 | Flutter app | F1 | in progress | [73-flutter-app](features/73-flutter-app.md) |
 | Left- and right-handed controls | F1 | not started | [79-handedness](features/79-handedness.md) |
 | Reading direction | F1 | not started | [80-reading-direction](features/80-reading-direction.md) |
+| Reader view settings | F1 | not started | [81-reader-view-settings](features/81-reader-view-settings.md) |
+| Table of contents | F1 | not started | [82-table-of-contents](features/82-table-of-contents.md) |
 | Library & series management | 2 | in progress | [01-library-and-series-management](features/01-library-and-series-management.md) |
 | Directory scanning | 2 | in progress | [34-directory-scanning](features/34-directory-scanning.md) |
 | Scannable directories | 2 | not started | [35-scannable-directories](features/35-scannable-directories.md) |
