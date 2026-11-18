@@ -1,7 +1,15 @@
 {
+  "book_count": {
+    "one": "{count} Buch",
+    "other": "{count} Bücher"
+  },
   "books_empty": "In dieser Reihe gibt es noch keine Bücher.",
   "chapter": "Kapitel {number}",
   "reload": "Neu laden",
+  "series_count": {
+    "one": "{count} Reihe",
+    "other": "{count} Reihen"
+  },
   "series_empty": "In dieser Bibliothek gibt es noch keine Reihen.",
   "volume": "Band {number}",
   "volume_chapter": "Band {volume}, Kapitel {chapter}"

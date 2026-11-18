@@ -1,8 +1,18 @@
 {
+  "book_count": {
+    "one": "{count} book",
+    "other": "{count} books",
+    "@other": "Under a series' name in a library's list; {count} is its number of books."
+  },
   "books_empty": "No books in this series yet.",
   "chapter": "Chapter {number}",
   "@chapter": "A book's label in a series' list; {number} is its chapter number.",
   "reload": "Reload",
+  "series_count": {
+    "one": "{count} series",
+    "other": "{count} series",
+    "@other": "Under a library's name in the list of libraries; {count} is its number of series."
+  },
   "series_empty": "No series in this library yet.",
   "volume": "Volume {number}",
   "@volume": "A book's label in a series' list; {number} is its volume number.",
