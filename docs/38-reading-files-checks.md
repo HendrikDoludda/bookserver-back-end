@@ -19,6 +19,11 @@ First: the server running with your demo folder in `BOOK_DIRS` ([`run`](run-depl
 - [x] Step 9 · Stop the server, then open a PDF: "This book can't be opened." with "Try again" under it. Start the server again, click "Try again": the book opens
 - [ ] Step 9 · With a PDF open, stop the server and scroll to pages you haven't seen yet: say what they show. Start the server again, scroll away and back: say whether they load — the plan leaves this open
 - [x] Step 9 · Open a PDF and leave it for 16 minutes, then press End (fn+→): the last page shows, and `sqlite3 ~/bookserver_backend/data/databases/app_data.sqlite "SELECT datetime(session_token_valid_until, 'unixepoch', 'localtime') FROM sessions WHERE device_name = 'macOS'"` shows a time about 15 minutes after the key press
+- [x] Step 10 · If the cookbook `goodforyou.epub` isn't in the catalog yet, scan once more ([`login`](run-deploy/local.md#commands), then [`scan`](run-deploy/local.md#commands)). Then open "fitzgerald great gatsby" and its book: "Opening the book…" with a bar, then the contents page and the chapters one after the other, in a column in the middle of the window; make the window narrow, and the text wraps to it
+- [x] Step 10 · "plath bell jar" reads the same way, and so do "test book epub" and "test book epub more detail"
+- [x] Step 10 · Close a book with the back arrow, then `find ~/Library/Containers/com.hendrikdoludda.bookserver -maxdepth 6 -name 'book-*.epub'` prints nothing: the downloaded file is gone
+- [x] Step 10 · Open "goodforyou": the bar fills as its 352 MB arrive, then its text shows as loose lines without photos — its pages come with the next steps
+- [x] Step 10 · Stop the server, then open an EPUB: "Can't reach the server…" with "Try again" under it; start the server again and click "Try again": the book opens
 
 ## At the end of the plan: iOS simulator and Android emulator
 - [ ] Step 8 · Open "bobby make believe sample": a swipe to the left turns to the next page, to the right back; pinch to zoom (in the iOS simulator, hold ⌥ and drag); while zoomed, a drag moves around the page; pinch back to normal size, and a swipe turns the page again
