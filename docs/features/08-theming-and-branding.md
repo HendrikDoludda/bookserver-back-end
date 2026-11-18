@@ -21,3 +21,6 @@ one edit, not a change to every screen.
 - [ ] Frontend-owned tokens file, or backend-served `GET /branding`? — blocks: the [BE] tasks and the branding screen. Suggested: backend-served, like the translation catalog — the only option the admin web view can edit.
 - [ ] If backend-served: a database table or a config file? — blocks: `GET /branding`. Suggested: a table — the admin web view edits it through the same API as everything else; a config file would also need router state beyond `Arc<Database>`.
 - [ ] Logo and favicon: bundled with the frontend, or uploaded and served by the backend? — blocks: the asset route. Suggested: uploaded and served, so the JSON stays small and browsers cache the images normally.
+
+## Missing information
+- [ ] The style and colour scheme the design tokens hold — answered by: you
