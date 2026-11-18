@@ -16,6 +16,7 @@ and gets no button; [handedness](79-handedness.md) only moves where the button s
 - [ ] 0.5 h · Texts: the button and the three modes in a `reader` namespace, `invalid_reading_mode` in `errors`, in `translations/en/frontend/` and `translations/de/frontend/` [BE]
 - [ ] 1 h · Reading-mode button in the PDF, CBZ and image-folder readers: switches at once and saves the choice with the `PUT` [FE]
 - [ ] 2 h · Right to left and left to right: page order and swipe direction follow the mode [FE]
-- [ ] 2 h · Continuous scroll: the pages run top to bottom in one scrolling column [FE]
+- [ ] 2.5 h · Each page's width and height in the page list (`GET /books/{id}/pages`), read from each image's header rather than the whole file, so CBZ and image-folder continuous scroll lays pages out before they load (TODO in `get_pages`) [BE]
+- [ ] 2 h · Continuous scroll for CBZ and image-folder books, as the PDF reader already scrolls: the pages run top to bottom in one scrolling column [FE]
 - [ ] 2 h · Page-turn tap zones as one layout shared by the readers; in the two paged modes the "next page" edge follows the mode [FE]
 - [ ] 0.5 h · Check by hand: a right-to-left manga goes forward by swiping right and tapping the left edge; the chosen mode carries over to the next volume and to another device

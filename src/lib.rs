@@ -7,7 +7,6 @@ pub mod error_types;
 pub mod routes;
 pub mod scanner;
 pub mod stream_reader;
-pub mod utils;
 
 #[cfg(test)]
 mod test_support;

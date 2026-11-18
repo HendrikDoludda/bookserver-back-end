@@ -220,27 +220,6 @@ impl PageError {
     }
 }
 
-#[derive(Error, Debug, Clone)]
-pub enum StreamReaderErrors {
-    #[error("File Not Found")]
-    FileNotFound,
-
-    #[error("Could not extract the string to str")]
-    FileSizeConversionFailed,
-
-    #[error("The range header that was provided is not valid")]
-    InvalidRangeHeader,
-
-    #[error("No file type found in the metadata")]
-    NoFileTypeFound,
-
-    #[error("Could not create the server response!")]
-    ResponseCreationFailed,
-
-    #[error("Could not create the body component!")]
-    BodyCreationFailed,
-}
-
 #[derive(Error, Debug)]
 pub enum RoutingErrors {
     #[error("Failed to start Axum")]
