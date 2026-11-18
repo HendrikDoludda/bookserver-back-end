@@ -25,6 +25,9 @@ First: the server running with your demo folder in `BOOK_DIRS` ([`run`](run-depl
 - [x] Step 10 · Close a book with the back arrow, then `find ~/Library/Containers/com.hendrikdoludda.bookserver -maxdepth 6 -name 'book-*.epub'` prints nothing: the downloaded file is gone
 - [x] Step 10 · Open "goodforyou": the bar fills as its 352 MB arrive, then its text shows as loose lines without photos — its pages come with the next steps
 - [x] Step 10 · Stop the server, then open an EPUB: "Can't reach the server…" with "Try again" under it; start the server again and click "Try again": the book opens
+- [x] Scrollbar · Open "fitzgerald great gatsby" and scroll down through two or three chapters: the scrollbar's thumb on the right keeps about the same size and moves steadily down, no wobbling. Drag the thumb to the middle and let go: you land about halfway through the book. Then make the window narrower: the thumb gets a little shorter, since the book got longer
+- [x] Blocks · Open "fitzgerald great gatsby", scroll down through two or three chapters, then back up, slowly and then fast: the text moves only with your fingers, never jumps; paragraphs, headings and chapter starts are spaced as before. Then "plath bell jar" the same way
+- [x] XML chapters · Open "fitzgerald great gatsby" and scroll through the contents page and the first chapter: they read exactly as in the Step 10 check above, with no paragraph suddenly coloured or underlined like a link
 - [x] Step 10b · Open "bobby make believe sample": it reads exactly as in the Step 8 checks above — → and ← turn the pages, never past either end; a two-finger swipe turns them too; pinch to zoom, then a swipe moves around the page; → shows the next page at normal size
 
 ## At the end of the plan: iOS simulator and Android emulator
