@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::SystemTime;
@@ -482,6 +483,35 @@ impl Database {
         ))
     }
 
+    /// How many series each library holds, by library id; a library without series is absent.
+    pub fn count_series_per_library_with_connection(
+        conn: &Connection,
+    ) -> Result<HashMap<i64, i64>, DatabaseError> {
+        counts_by_id(
+            conn,
+            "SELECT library_id, COUNT(*) FROM library_elements GROUP BY library_id",
+            rusqlite::params![],
+            "library_elements",
+        )
+    }
+
+    /// How many books each series of a library holds, by series id; a series without books is
+    /// absent.
+    pub fn count_books_per_series_in_library_with_connection(
+        conn: &Connection,
+        library_id: i64,
+    ) -> Result<HashMap<i64, i64>, DatabaseError> {
+        counts_by_id(
+            conn,
+            "SELECT books.series, COUNT(*) FROM books \
+             JOIN library_elements ON library_elements.series_id = books.series \
+             WHERE library_elements.library_id = ?1 \
+             GROUP BY books.series",
+            rusqlite::params![library_id],
+            "books",
+        )
+    }
+
     /// Looks up a row id by a single column value.
     /// Legacy: new code should not use this; it remains for the folder scanner.
     pub fn get_id_from_table(
@@ -596,6 +626,27 @@ impl Database {
 /// timestamp column uses. Panics for times before 1970.
 pub fn convert_system_time_to_unix_time(time: SystemTime) -> i64 {
     checked_unix_time(time).expect("the server's own times lie after 1970")
+}
+
+/// Reads the `(id, count)` rows of a `GROUP BY` query into a map from id to count.
+fn counts_by_id(
+    conn: &Connection,
+    query: &str,
+    params: impl rusqlite::Params,
+    table: &'static str,
+) -> Result<HashMap<i64, i64>, DatabaseError> {
+    let mut stmt = conn.prepare(query).map_err(logged(
+        "counting",
+        table,
+        DatabaseError::TaskPreparationFailure,
+    ))?;
+    let rows = stmt
+        .query_map(params, |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
+        })
+        .map_err(logged("counting", table, DatabaseError::QueryFailure))?;
+    rows.collect::<Result<HashMap<i64, i64>, _>>()
+        .map_err(logged("counting", table, DatabaseError::NextRowFailure))
 }
 
 /// Whole seconds since the Unix epoch, or `None` for a time before it — for times the
@@ -880,5 +931,101 @@ mod tests {
 
         // A plain byte order would put "Beta" first.
         assert_eq!(ids, [alpha, beta, zeta]);
+    }
+
+    fn insert_library(conn: &Connection, name: &str) -> i64 {
+        conn.execute(
+            "INSERT INTO library (library_name, library_type) VALUES (?1, 'books')",
+            [name],
+        )
+        .unwrap();
+        conn.last_insert_rowid()
+    }
+
+    fn link(conn: &Connection, library: i64, series: i64) {
+        conn.execute(
+            "INSERT INTO library_elements (library_id, series_id) VALUES (?1, ?2)",
+            [library, series],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn each_librarys_series_are_counted() {
+        let conn = memory_connection();
+        let manga = insert_library(&conn, "manga");
+        let comics = insert_library(&conn, "comics");
+        let empty = insert_library(&conn, "empty");
+        let (one, two, shared) = (
+            insert_series(&conn, "one"),
+            insert_series(&conn, "two"),
+            insert_series(&conn, "shared"),
+        );
+        for (library, series) in [
+            (manga, one),
+            (manga, two),
+            (manga, shared),
+            (comics, shared),
+        ] {
+            link(&conn, library, series);
+        }
+
+        let counts = Database::count_series_per_library_with_connection(&conn).unwrap();
+
+        assert_eq!(counts, HashMap::from([(manga, 3), (comics, 1)]));
+        assert_eq!(
+            counts.get(&empty),
+            None,
+            "a library without series is absent"
+        );
+    }
+
+    #[test]
+    fn a_librarys_series_count_only_their_own_books() {
+        let conn = memory_connection();
+        let manga = insert_library(&conn, "manga");
+        let comics = insert_library(&conn, "comics");
+        let alpha = insert_series(&conn, "alpha");
+        let beta = insert_series(&conn, "beta");
+        let empty = insert_series(&conn, "empty");
+        let elsewhere = insert_series(&conn, "elsewhere");
+        for (library, series) in [
+            (manga, alpha),
+            (manga, beta),
+            (manga, empty),
+            (comics, elsewhere),
+        ] {
+            link(&conn, library, series);
+        }
+        for volume in 1..=3 {
+            insert_book(&conn, alpha, "Alpha", Some(volume), None);
+        }
+        insert_book(&conn, beta, "Beta", Some(1), None);
+        insert_book(&conn, elsewhere, "Elsewhere", Some(1), None);
+        conn.execute(
+            "INSERT INTO books (title, author, format, language, tags, file_path) \
+             VALUES ('Loose', 'Unknown Author', 'cbz', 'unknown', '', '/books/loose.cbz')",
+            [],
+        )
+        .unwrap();
+
+        let counts =
+            Database::count_books_per_series_in_library_with_connection(&conn, manga).unwrap();
+
+        assert_eq!(counts, HashMap::from([(alpha, 3), (beta, 1)]));
+        assert_eq!(counts.get(&empty), None, "a series without books is absent");
+    }
+
+    #[test]
+    fn a_library_without_series_has_no_book_counts() {
+        let conn = memory_connection();
+        let empty = insert_library(&conn, "empty");
+        let elsewhere = insert_series(&conn, "elsewhere");
+        insert_book(&conn, elsewhere, "Elsewhere", Some(1), None);
+
+        let counts =
+            Database::count_books_per_series_in_library_with_connection(&conn, empty).unwrap();
+
+        assert!(counts.is_empty());
     }
 }

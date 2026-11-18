@@ -1,6 +1,25 @@
 use serde::Serialize;
 
-use crate::{db::checked_unix_time, models::BookMetadata};
+use crate::{
+    db::checked_unix_time,
+    models::{BookMetadata, BookSeriesMetadata, LibraryMetadata},
+};
+
+/// One library as the library list sends it: its row, and how many series it holds.
+#[derive(Debug, Serialize)]
+pub struct LibrarySummary {
+    #[serde(flatten)]
+    pub library: LibraryMetadata,
+    pub series_count: i64,
+}
+
+/// One series as a library's series list sends it: its row, and how many books it holds.
+#[derive(Debug, Serialize)]
+pub struct SeriesSummary {
+    #[serde(flatten)]
+    pub series: BookSeriesMetadata,
+    pub book_count: i64,
+}
 
 /// One book as the app gets it — never the server's file path, the file's hash or the cover's
 /// path: files and covers are reached by the book's id. Times are unix seconds.

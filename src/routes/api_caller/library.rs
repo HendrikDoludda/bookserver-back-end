@@ -15,7 +15,7 @@ use axum::{
 
 use crate::{
     book_pages::{self, PageContent},
-    data_models::books_model::{BookSummary, PageSummary},
+    data_models::books_model::{BookSummary, LibrarySummary, PageSummary, SeriesSummary},
     db::Database,
     error_types::{internal_error_response, AppErrors, DatabaseError, PageError},
     folder_scanner::scan_all_folders,
@@ -28,30 +28,57 @@ use super::extractors::{AdminSession, AuthSession, PathParams};
 
 // === Library, series & book handlers =========================================
 
-/// Return every library, each paired with its row id.
+/// Return every library with its number of series, each paired with its row id.
 pub async fn get_libraries(
     _session: AuthSession,
     State(db): State<Arc<Database>>,
-) -> Result<Json<Vec<WithId<LibraryMetadata>>>, AppErrors> {
+) -> Result<Json<Vec<WithId<LibrarySummary>>>, AppErrors> {
     let libraries = db
-        .read(|conn| Ok(Database::get_all_entries_with_connection::<LibraryMetadata>(conn)?))
+        .read(|conn| {
+            let libraries = Database::get_all_entries_with_connection::<LibraryMetadata>(conn)?;
+            let series_counts = Database::count_series_per_library_with_connection(conn)?;
+            Ok(libraries
+                .into_iter()
+                .map(|library| WithId {
+                    id: library.id,
+                    data: LibrarySummary {
+                        series_count: series_counts.get(&library.id).copied().unwrap_or(0),
+                        library: library.data,
+                    },
+                })
+                .collect::<Vec<_>>())
+        })
         .await?;
     Ok(Json(libraries))
 }
 
-/// Return every series that belongs to the given library, by name, each with its row id.
+/// Return every series that belongs to the given library, by name, with its number of books,
+/// each with its row id.
 pub async fn get_series_in_library(
     _session: AuthSession,
     State(db): State<Arc<Database>>,
     PathParams(library_id): PathParams<i64>,
-) -> Result<Json<Vec<WithId<BookSeriesMetadata>>>, AppErrors> {
+) -> Result<Json<Vec<WithId<SeriesSummary>>>, AppErrors> {
     let series = db
         .read(move |conn| {
             let series_ids =
                 Database::get_series_entries_in_library_with_connection(conn, library_id)?;
-            Ok(Database::get_entries_batch_with_connection::<
-                BookSeriesMetadata,
-            >(conn, &series_ids)?)
+            let series = Database::get_entries_batch_with_connection::<BookSeriesMetadata>(
+                conn,
+                &series_ids,
+            )?;
+            let book_counts =
+                Database::count_books_per_series_in_library_with_connection(conn, library_id)?;
+            Ok(series
+                .into_iter()
+                .map(|one| WithId {
+                    id: one.id,
+                    data: SeriesSummary {
+                        book_count: book_counts.get(&one.id).copied().unwrap_or(0),
+                        series: one.data,
+                    },
+                })
+                .collect::<Vec<_>>())
         })
         .await?;
     Ok(Json(series))

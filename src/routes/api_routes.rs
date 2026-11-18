@@ -375,6 +375,7 @@ mod tests {
                 "library_type": "Books",
                 "cover_image": null,
                 "description": null,
+                "series_count": 1,
             }])
         );
 
@@ -390,7 +391,78 @@ mod tests {
                 "cover_image": null,
                 "start_release_year": null,
                 "end_release_year": null,
+                "book_count": 0,
             }])
+        );
+    }
+
+    #[tokio::test]
+    async fn the_library_and_series_lists_count_their_series_and_books() {
+        let temp = TempDatabase::open();
+        let (manga, empty) = temp
+            .db
+            .setup_new_transaction(|conn| {
+                let library = |name: &str| {
+                    conn.execute(
+                        "INSERT INTO library (library_name, library_type) VALUES (?1, 'books')",
+                        [name],
+                    )
+                    .unwrap();
+                    conn.last_insert_rowid()
+                };
+                let (manga, empty) = (library("/manga"), library("/empty"));
+                for (name, books) in [("alpha", 2), ("beta", 1), ("gamma", 0)] {
+                    conn.execute("INSERT INTO series (name) VALUES (?1)", [name])
+                        .unwrap();
+                    let series = conn.last_insert_rowid();
+                    conn.execute(
+                        "INSERT INTO library_elements (library_id, series_id) VALUES (?1, ?2)",
+                        [manga, series],
+                    )
+                    .unwrap();
+                    for volume in 1..=books {
+                        conn.execute(
+                            "INSERT INTO books (title, author, format, language, tags, \
+                             file_path, volume_number, series) \
+                             VALUES (?1, 'Unknown Author', 'cbz', 'Unknown', '', ?2, ?3, ?4)",
+                            rusqlite::params![
+                                name,
+                                format!("/manga/{name} v{volume}.cbz"),
+                                volume,
+                                series
+                            ],
+                        )
+                        .unwrap();
+                    }
+                }
+                Ok((manga, empty))
+            })
+            .unwrap();
+        let member = logged_in(&temp, "bob", "member");
+        let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
+        let pairs = |body: &[u8], key: &str, count: &str| -> Vec<(serde_json::Value, i64)> {
+            json(body)
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|row| (row[key].clone(), row[count].as_i64().unwrap()))
+                .collect()
+        };
+
+        let (status, _, body) =
+            call(&app, authorized("GET", "/api/v1/libraries", &member, None)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            pairs(&body, "id", "series_count"),
+            [(manga.into(), 3), (empty.into(), 0)]
+        );
+
+        let uri = format!("/api/v1/libraries/{manga}/series");
+        let (status, _, body) = call(&app, authorized("GET", &uri, &member, None)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            pairs(&body, "name", "book_count"),
+            [("alpha".into(), 2), ("beta".into(), 1), ("gamma".into(), 0)]
         );
     }
 
