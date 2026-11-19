@@ -1,0 +1,11 @@
+{
+  "app_code": "Code",
+  "app_explanation": "Enter the 6-digit code from your authenticator app.",
+  "@app_explanation": "The step after the password, for an account with two-factor authentication.",
+  "recovery_code": "Recovery code",
+  "recovery_explanation": "Enter one of the recovery codes you saved when you turned on two-factor authentication. Each one works once.",
+  "title": "Two-factor authentication",
+  "use_app_code": "Use the authenticator app instead",
+  "use_recovery_code": "Use a recovery code instead",
+  "@use_recovery_code": "For someone without their authenticator app, such as on a lost phone."
+}

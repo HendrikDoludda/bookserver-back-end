@@ -1,0 +1,9 @@
+{
+  "app_code": "Code",
+  "app_explanation": "Gib den 6-stelligen Code aus deiner Authenticator-App ein.",
+  "recovery_code": "Wiederherstellungscode",
+  "recovery_explanation": "Gib einen der Wiederherstellungscodes ein, die du beim Einschalten der Zwei-Faktor-Authentifizierung gespeichert hast. Jeder funktioniert nur einmal.",
+  "title": "Zwei-Faktor-Authentifizierung",
+  "use_app_code": "Stattdessen die Authenticator-App verwenden",
+  "use_recovery_code": "Stattdessen einen Wiederherstellungscode verwenden"
+}
