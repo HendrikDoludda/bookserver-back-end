@@ -18,3 +18,4 @@ codes, sign-up and email verification, password reset, and the language setting 
 - [ ] 2 h · "Forgot password" form [FE]
 - [ ] 2 h · Code and new-password screen [FE]
 - [ ] 2 h · Settings screen with a language picker [FE]
+- [ ] 1 h · Each language's icon in the picker's list, from `GET /api/v1/locales` [FE]

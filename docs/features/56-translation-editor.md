@@ -18,4 +18,4 @@ placeholder. Keys come from the code, so the editor can't add or delete them.
 - [ ] ? h · Languages screen: add a language, set its icon, enable it, make it the default, order the list [FE]
 
 ## Open decisions
-- [ ] Languages with more plural forms than English (Polish: `few`, `many`) need keys the English files don't have — how are they created? — blocks: adding such a language
+- [ ] Languages with more plural forms than English (Polish: `few`, `many`) need keys the English files don't have; a shipped translation creates them ([57](57-frontend-localization.md)) — how does a language added in the editor get them? — blocks: adding such a language

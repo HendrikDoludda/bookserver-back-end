@@ -54,6 +54,9 @@ const SHIPPED: &[(&str, &str)] = &[
 /// `translations::interpolate` fills in.
 pub(crate) static PLACEHOLDER: Lazy<Regex> = Lazy::new(|| Regex::new(r"\{([a-z0-9_]+)\}").unwrap());
 
+// The CLDR plural forms English's rules never pick, so the English files can't define them.
+const EXTRA_PLURAL_FORMS: [&str; 4] = ["zero", "two", "few", "many"];
+
 /// A language as its `language.json` describes it.
 #[derive(Debug, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -79,12 +82,13 @@ impl KeyName {
     }
 }
 
-/// A key as the English files define it, with its texts.
+/// A key with its texts: one the English files define, or a plural form only other languages use.
 #[derive(Debug, PartialEq)]
 pub(crate) struct Key {
     pub audience: Audience,
     pub hint: Option<String>,
-    pub english: String,
+    /// `None` for a plural form English doesn't use, such as `few`.
+    pub english: Option<String>,
     /// Its text in each other shipped language that has one, by language code.
     pub translated: BTreeMap<String, String>,
 }
@@ -93,7 +97,7 @@ impl Key {
     /// Its text in the language `code`, if the shipped files have one.
     pub fn text(&self, code: &str) -> Option<&str> {
         if code == SOURCE_LOCALE {
-            Some(&self.english)
+            self.english.as_deref()
         } else {
             self.translated.get(code).map(String::as_str)
         }
@@ -320,7 +324,7 @@ pub(crate) fn read(files: &[(&str, &str)]) -> Result<Catalog, ShippedTranslation
             let key = Key {
                 audience: parsed.audience,
                 hint: hints.remove(&name),
-                english: text,
+                english: Some(text),
                 translated: BTreeMap::new(),
             };
             keys.insert(KeyName::new(parsed.namespace, name), key);
@@ -341,13 +345,14 @@ pub(crate) fn read(files: &[(&str, &str)]) -> Result<Catalog, ShippedTranslation
             return Err(side_mismatch(&parsed));
         }
         for (name, text) in parsed.texts {
-            let Some(key) = keys.get_mut(&KeyName::new(parsed.namespace, name.clone())) else {
+            let key_name = KeyName::new(parsed.namespace, name.clone());
+            let Some(source) = source_text(&keys, &key_name) else {
                 return Err(ShippedTranslationError::UnknownKey {
                     file: parsed.file.to_string(),
                     key: name,
                 });
             };
-            let expected = placeholders(&key.english);
+            let expected = placeholders(source);
             if placeholders(&text) != expected {
                 return Err(ShippedTranslationError::PlaceholdersDiffer {
                     file: parsed.file.to_string(),
@@ -355,7 +360,15 @@ pub(crate) fn read(files: &[(&str, &str)]) -> Result<Catalog, ShippedTranslation
                     expected: listed(&expected),
                 });
             }
-            key.translated.insert(parsed.code.to_string(), text);
+            keys.entry(key_name)
+                .or_insert_with(|| Key {
+                    audience: parsed.audience,
+                    hint: None,
+                    english: None,
+                    translated: BTreeMap::new(),
+                })
+                .translated
+                .insert(parsed.code.to_string(), text);
         }
     }
 
@@ -444,6 +457,24 @@ fn flatten(
         }
     }
     Ok(())
+}
+
+/// The English text whose placeholders a translation of `name` must keep: the key's own, or — for
+/// a plural form English doesn't use, next to an English `.one` and `.other` — the `.other` text.
+fn source_text<'a>(keys: &'a BTreeMap<KeyName, Key>, name: &KeyName) -> Option<&'a str> {
+    if let Some(english) = keys.get(name).and_then(|key| key.english.as_deref()) {
+        return Some(english);
+    }
+    let (base, form) = name.name.rsplit_once('.')?;
+    if !EXTRA_PLURAL_FORMS.contains(&form) {
+        return None;
+    }
+    let english_form = |form: &str| {
+        keys.get(&KeyName::new(&name.namespace, format!("{base}.{form}")))
+            .and_then(|key| key.english.as_deref())
+    };
+    english_form("one")?;
+    english_form("other")
 }
 
 fn is_name(segment: &str) -> bool {
@@ -583,12 +614,20 @@ mod tests {
             ]
         );
 
-        let keys = shipped().unwrap().keys.len();
+        let english_keys = shipped()
+            .unwrap()
+            .keys
+            .values()
+            .filter(|key| key.english.is_some())
+            .count();
         let english = stored_texts(&conn)
             .keys()
             .filter(|(code, _)| code == "en")
             .count();
-        assert_eq!(english, keys, "every key has its English text");
+        assert_eq!(
+            english, english_keys,
+            "every key English writes has its English text"
+        );
     }
 
     #[test]
@@ -787,6 +826,179 @@ mod tests {
         let subject = &read.keys[&KeyName::new("mail", "subject".to_string())];
         assert_eq!(subject.text("qaa"), None);
         assert_eq!(subject.text("en"), Some("Code"));
+    }
+
+    const SECOND_TEST_LANGUAGE: (&str, &str) = (
+        "qab/language.json",
+        r#"{"display_name": "Second test", "sort_order": 3}"#,
+    );
+    const ENGLISH_BOOKS: (&str, &str) = (
+        "en/frontend/browse.json",
+        r#"{"book_count": {"one": "{count} book", "other": "{count} books"}, "title": "Books"}"#,
+    );
+
+    fn key_name(namespace: &str, name: &str) -> KeyName {
+        KeyName::new(namespace, name.to_string())
+    }
+
+    #[test]
+    fn a_translation_may_add_the_plural_forms_english_doesnt_use() {
+        let read = catalog(&[
+            ENGLISH,
+            TEST_LANGUAGE,
+            ENGLISH_BOOKS,
+            (
+                "qaa/frontend/browse.json",
+                r#"{"book_count": {"one": "{count} książka", "few": "{count} książki",
+                    "many": "{count} książek", "other": "{count} książki"}}"#,
+            ),
+        ]);
+
+        let few = &read.keys[&key_name("browse", "book_count.few")];
+        assert_eq!(few.text("qaa"), Some("{count} książki"));
+        assert_eq!(few.text("en"), None, "English has no few form");
+        assert_eq!(few.audience, Audience::Frontend);
+        assert_eq!(few.hint, None);
+        let many = &read.keys[&key_name("browse", "book_count.many")];
+        assert_eq!(many.text("qaa"), Some("{count} książek"));
+        assert!(
+            !read
+                .keys
+                .contains_key(&key_name("browse", "book_count.zero")),
+            "only the forms a file writes become keys"
+        );
+    }
+
+    #[test]
+    fn languages_that_write_the_same_plural_form_share_its_key() {
+        let read = catalog(&[
+            ENGLISH,
+            TEST_LANGUAGE,
+            SECOND_TEST_LANGUAGE,
+            ENGLISH_BOOKS,
+            (
+                "qaa/frontend/browse.json",
+                r#"{"book_count": {"few": "{count} in qaa"}}"#,
+            ),
+            (
+                "qab/frontend/browse.json",
+                r#"{"book_count": {"few": "{count} in qab"}}"#,
+            ),
+        ]);
+
+        let few = &read.keys[&key_name("browse", "book_count.few")];
+        assert_eq!(few.text("qaa"), Some("{count} in qaa"));
+        assert_eq!(few.text("qab"), Some("{count} in qab"));
+        assert_eq!(read.keys.len(), 4, "one, other, title and the shared few");
+    }
+
+    #[test]
+    fn a_plural_form_english_doesnt_use_needs_an_english_one_and_other() {
+        use ShippedTranslationError as E;
+        let file = "qaa/frontend/browse.json";
+        let unknown = |key: &str| E::UnknownKey {
+            file: file.to_string(),
+            key: key.to_string(),
+        };
+        let english = (
+            "en/frontend/browse.json",
+            r#"{"book_count": {"one": "{count} book", "other": "{count} books"},
+                "total": {"other": "{count} in all"}}"#,
+        );
+        let cases = [
+            (r#"{"missing": {"few": "x"}}"#, unknown("missing.few")),
+            (r#"{"total": {"few": "{count}"}}"#, unknown("total.few")),
+            (
+                r#"{"book_count": {"dozen": "{count}"}}"#,
+                unknown("book_count.dozen"),
+            ),
+            (r#"{"few": "x"}"#, unknown("few")),
+            (
+                r#"{"book_count": {"few": "{number} książki"}}"#,
+                E::PlaceholdersDiffer {
+                    file: file.to_string(),
+                    key: "book_count.few".to_string(),
+                    expected: "{count}".to_string(),
+                },
+            ),
+        ];
+
+        for (translated, expected) in cases {
+            let files = [ENGLISH, TEST_LANGUAGE, english, (file, translated)];
+            assert_eq!(read(&files), Err(expected), "{translated}");
+        }
+    }
+
+    #[test]
+    fn a_plural_form_english_writes_itself_keeps_its_own_placeholders() {
+        let english = (
+            "en/frontend/browse.json",
+            r#"{"book_count": {"one": "{count} book", "few": "{count} of {total}",
+                "other": "{count} books"}}"#,
+        );
+        let result = read(&[
+            ENGLISH,
+            TEST_LANGUAGE,
+            english,
+            (
+                "qaa/frontend/browse.json",
+                r#"{"book_count": {"few": "{count} książki"}}"#,
+            ),
+        ]);
+        assert_eq!(
+            result,
+            Err(ShippedTranslationError::PlaceholdersDiffer {
+                file: "qaa/frontend/browse.json".to_string(),
+                key: "book_count.few".to_string(),
+                expected: "{count}, {total}".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn a_plural_form_english_doesnt_use_is_stored_without_english_and_leaves_with_its_file() {
+        let conn = migrated_connection();
+        let with_few = catalog(&[
+            ENGLISH,
+            TEST_LANGUAGE,
+            ENGLISH_BOOKS,
+            (
+                "qaa/frontend/browse.json",
+                r#"{"book_count": {"few": "{count} książki"}}"#,
+            ),
+        ]);
+        sync(&conn, &with_few).unwrap();
+        assert_eq!(
+            stored_texts(&conn),
+            texts(&[
+                ("en", "browse.book_count.one", "{count} book"),
+                ("en", "browse.book_count.other", "{count} books"),
+                ("en", "browse.title", "Books"),
+                ("qaa", "browse.book_count.few", "{count} książki"),
+            ])
+        );
+
+        let summary = sync(&conn, &catalog(&[ENGLISH, TEST_LANGUAGE, ENGLISH_BOOKS])).unwrap();
+
+        let names: Vec<String> = db_translations::all_keys(&conn)
+            .unwrap()
+            .into_iter()
+            .map(|key| key.name)
+            .collect();
+        assert!(!names.contains(&"book_count.few".to_string()), "{names:?}");
+        assert_eq!(
+            stored_texts(&conn).len(),
+            3,
+            "the few text went with its key"
+        );
+        assert_eq!(
+            summary,
+            SyncSummary {
+                languages_added: 0,
+                keys_changed: 1,
+                texts_changed: 0,
+            }
+        );
     }
 
     #[test]

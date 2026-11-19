@@ -80,7 +80,10 @@ mod tests {
     use rusqlite::Connection;
 
     use super::*;
-    use crate::test_support::{insert_language, insert_texts, TempDatabase};
+    use crate::{
+        database_related_scripts::translation_seed,
+        test_support::{insert_language, insert_texts, TempDatabase},
+    };
 
     fn set_up(temp: &TempDatabase, setup: impl FnOnce(&Connection)) {
         temp.db
@@ -200,6 +203,43 @@ mod tests {
         assert_eq!(test["translated"], "Translated");
         assert_eq!(test["missing"], "Only English");
         assert_eq!(test.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn a_plural_form_english_doesnt_use_reaches_only_the_language_that_writes_it() {
+        let temp = TempDatabase::open();
+        set_up(&temp, |conn| {
+            let shipped = translation_seed::read(&[
+                (
+                    "en/language.json",
+                    r#"{"display_name": "English", "sort_order": 1}"#,
+                ),
+                (
+                    "qaa/language.json",
+                    r#"{"display_name": "Test", "sort_order": 2}"#,
+                ),
+                (
+                    "en/frontend/test.json",
+                    r#"{"count": {"one": "{count} book", "other": "{count} books"}}"#,
+                ),
+                (
+                    "qaa/frontend/test.json",
+                    r#"{"count": {"few": "{count} książki"}}"#,
+                ),
+            ])
+            .unwrap();
+            translation_seed::sync(conn, &shipped).unwrap();
+        });
+
+        let translated = texts_of(&temp, "qaa", Some("test")).await;
+        assert_eq!(translated["test"]["count.few"], "{count} książki");
+        assert_eq!(
+            translated["test"]["count.other"], "{count} books",
+            "English stands in for the forms the language leaves out"
+        );
+        let english = texts_of(&temp, "en", Some("test")).await;
+        assert!(!english["test"].contains_key("count.few"));
+        assert_eq!(english["test"].len(), 2);
     }
 
     #[tokio::test]
