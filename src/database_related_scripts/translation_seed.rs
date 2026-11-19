@@ -41,6 +41,7 @@ const SHIPPED: &[(&str, &str)] = &[
     shipped!("en/frontend/server.json"),
     shipped!("en/frontend/settings.json"),
     shipped!("en/frontend/sign_up.json"),
+    shipped!("en/frontend/two_factor.json"),
     shipped!("en/frontend/verify_email.json"),
     shipped!("en/backend/email.json"),
     shipped!("de/language.json"),
@@ -56,6 +57,7 @@ const SHIPPED: &[(&str, &str)] = &[
     shipped!("de/frontend/server.json"),
     shipped!("de/frontend/settings.json"),
     shipped!("de/frontend/sign_up.json"),
+    shipped!("de/frontend/two_factor.json"),
     shipped!("de/frontend/verify_email.json"),
     shipped!("de/backend/email.json"),
 ];

@@ -1,6 +1,6 @@
 # Account screens
 
-State: in progress
+State: completed
 
 The app's screens for the account flows the server offers — login, two-factor auth and recovery
 codes, sign-up and email verification, password reset, and the language setting — built on the
@@ -22,7 +22,7 @@ codes, sign-up and email verification, password reset, and the language setting 
 - [x] 0.25 h · A temporary settings button next to Sign out in the library screen's top bar, until [83](83-app-layout.md)'s user menu [FE]
 - [x] 2 h · Settings screen with a language picker; its "Device language" entry is written in the language choosing it shows [FE]
 - [x] 1 h · Each language's icon in the picker's list, from `GET /api/v1/locales` [FE]
-- [ ] 0.5 h · Texts for the 2FA settings in a `two_factor` namespace [BE]
-- [ ] 4 h · 2FA settings: enable (QR code + confirm) and disable [FE]
-- [ ] 1 h · Show the recovery codes once, right after 2FA is switched on [FE]
-- [ ] 1 h · Renew the recovery codes from the 2FA settings, shown once like the first ones [FE]
+- [x] 0.5 h · Texts for the 2FA settings in a `two_factor` namespace [BE]
+- [x] 4 h · 2FA settings: enable (QR code + confirm) and disable [FE]
+- [x] 1 h · Show the recovery codes once, right after 2FA is switched on [FE]
+- [x] 1 h · Renew the recovery codes from the 2FA settings, shown once like the first ones [FE]

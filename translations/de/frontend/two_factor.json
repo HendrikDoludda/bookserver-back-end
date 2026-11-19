@@ -1,0 +1,31 @@
+{
+  "code": "Code aus der App",
+  "code_or_recovery": "Code aus der App oder Wiederherstellungscode",
+  "codes_explanation": "Jeder Code meldet dich einmal an, falls du deine Authenticator-App verlierst. Bewahre sie sicher auf: Sie werden nur jetzt angezeigt.",
+  "codes_left": {
+    "one": "{count} Wiederherstellungscode übrig",
+    "other": "{count} Wiederherstellungscodes übrig"
+  },
+  "codes_title": "Deine Wiederherstellungscodes",
+  "confirm": "Einschalten",
+  "copied": "Kopiert.",
+  "copy": "Kopieren",
+  "copy_all": "Alle kopieren",
+  "done": "Fertig",
+  "explanation_off": "Aus. Schalte sie ein, um dich zusätzlich zu deinem Passwort mit einem Code aus einer Authenticator-App anzumelden.",
+  "no_app": "Keine Authenticator-App auf diesem Gerät hat den Link geöffnet. Gib den Einrichtungsschlüssel stattdessen dort ein.",
+  "off_done": "Die Zwei-Faktor-Authentifizierung ist aus. Melde dich erneut an.",
+  "off_explanation": "Gib dein Passwort und einen Code aus deiner Authenticator-App oder einen deiner Wiederherstellungscodes ein. Das Ausschalten meldet dich überall ab.",
+  "off_title": "Zwei-Faktor-Authentifizierung ausschalten",
+  "on": "An.",
+  "open_in_app": "In Authenticator-App öffnen",
+  "password": "Dein Passwort",
+  "renew": "Neue Wiederherstellungscodes",
+  "renew_explanation": "Gib dein Passwort und einen Code aus deiner Authenticator-App oder einen deiner Wiederherstellungscodes ein. Die alten Wiederherstellungscodes funktionieren dann nicht mehr.",
+  "secret": "Einrichtungsschlüssel",
+  "setup_explanation": "Scanne diesen Code mit deiner Authenticator-App oder gib dort den Einrichtungsschlüssel ein. Gib dann den Code aus der App und dein Passwort ein.",
+  "setup_title": "Zwei-Faktor-Authentifizierung einschalten",
+  "title": "Zwei-Faktor-Authentifizierung",
+  "turn_off": "Ausschalten",
+  "turn_on": "Einschalten"
+}
