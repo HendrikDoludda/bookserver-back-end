@@ -17,7 +17,7 @@
 | Translation catalog (i18n) | F0 | completed | [13-internationalization](features/13-internationalization.md) |
 | Reading files | F1 | completed | [38-reading-files](features/38-reading-files.md) |
 | Browsing | F1 | completed | [43-browsing](features/43-browsing.md) |
-| Frontend localization | F1 | in progress | [57-frontend-localization](features/57-frontend-localization.md) |
+| Frontend localization | F1 | completed | [57-frontend-localization](features/57-frontend-localization.md) |
 | Account screens | F1 | in progress | [58-account-screens](features/58-account-screens.md) |
 | Flutter app | F1 | in progress | [73-flutter-app](features/73-flutter-app.md) |
 | Left- and right-handed controls | F1 | not started | [79-handedness](features/79-handedness.md) |
