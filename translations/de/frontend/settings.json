@@ -1,0 +1,7 @@
+{
+  "device_language": "Gerätesprache",
+  "device_language_explanation": "Folgt der Sprache deines Geräts, wenn der Server sie anbietet.",
+  "language": "Sprache",
+  "reload": "Neu laden",
+  "title": "Einstellungen"
+}

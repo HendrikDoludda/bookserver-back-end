@@ -1,0 +1,8 @@
+{
+  "device_language": "Device language",
+  "device_language_explanation": "Follows your device's language where the server offers it.",
+  "@device_language_explanation": "Under \"Device language\" in the language list: the choice of someone who hasn't picked a language.",
+  "language": "Language",
+  "reload": "Reload",
+  "title": "Settings"
+}
