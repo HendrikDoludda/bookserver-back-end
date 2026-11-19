@@ -1,0 +1,12 @@
+{
+  "email": "E-Mail-Adresse",
+  "password": "Passwort",
+  "password_repeat": "Passwort wiederholen",
+  "password_rule": "Mindestens 12 Zeichen.",
+  "setup_code": "Einrichtungscode",
+  "setup_code_explanation": "Das erste Konto des Servers wird sein Admin und braucht den Einrichtungscode aus dem Startprotokoll des Servers.",
+  "submit": "Konto erstellen",
+  "title": "Konto erstellen",
+  "username": "Benutzername",
+  "username_rule": "3 bis 32 Buchstaben, Ziffern, Punkte, Bindestriche oder Unterstriche."
+}

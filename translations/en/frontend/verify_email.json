@@ -1,0 +1,10 @@
+{
+  "code": "Code",
+  "explanation": "We sent a code to your email address. Enter it here to finish setting up your account.",
+  "@explanation": "After sign-up, or after signing in to an account whose address isn't confirmed yet.",
+  "resend": "Send a new code",
+  "resent": "If the account still waits for its code, a new one is on its way.",
+  "@resent": "The server doesn't say whether the account exists, so this can't promise a mail.",
+  "submit": "Confirm",
+  "title": "Confirm your email address"
+}

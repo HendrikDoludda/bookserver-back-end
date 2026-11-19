@@ -1,5 +1,7 @@
 {
   "change_server": "Server wechseln",
+  "create_account": "Konto erstellen",
+  "forgot_password": "Passwort vergessen?",
   "password": "Passwort",
   "sign_in": "Anmelden",
   "title": "Anmelden",
