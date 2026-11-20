@@ -34,6 +34,7 @@ epub-parser = "0.3.4"
 pdfium-render = { version = "0.9.4", default-features = false, features = ["pdfium_7543", "image_latest", "thread_safe"] }
 image = "0.25.10"
 zip = "8.6.0"
+quick-xml = "0.41.0"
 tower-http = {version = "0.7.1", features = ["full"]}
 tower = "0.5.3"
 uuid = {version="1.26.0", features=["v4",]}

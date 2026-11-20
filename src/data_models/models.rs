@@ -28,6 +28,7 @@ pub enum DatabaseTypes {
     Locales,
     TranslationKeys,
     Translations,
+    ReadingModes,
 }
 
 impl DatabaseTypes {
@@ -46,11 +47,12 @@ impl DatabaseTypes {
             DatabaseTypes::Locales => "locales",
             DatabaseTypes::TranslationKeys => "translation_keys",
             DatabaseTypes::Translations => "translations",
+            DatabaseTypes::ReadingModes => "reading_modes",
         }
     }
 
-    /// The column a row is identified by; `None` for the junctions `library_elements` and
-    /// `translations`, whose rows are identified by two columns.
+    /// The column a row is identified by; `None` for `library_elements`, `translations` and
+    /// `reading_modes`, whose rows are identified by two columns.
     pub fn get_key_column(&self) -> Option<&str> {
         match self {
             DatabaseTypes::Books
@@ -58,7 +60,9 @@ impl DatabaseTypes {
             | DatabaseTypes::Series
             | DatabaseTypes::Users
             | DatabaseTypes::TranslationKeys => Some("id"),
-            DatabaseTypes::LibraryElements | DatabaseTypes::Translations => None,
+            DatabaseTypes::LibraryElements
+            | DatabaseTypes::Translations
+            | DatabaseTypes::ReadingModes => None,
             DatabaseTypes::Locales => Some("code"),
             DatabaseTypes::Totp | DatabaseTypes::UserSettings => Some("user_id"),
             DatabaseTypes::Session => Some("session_id"),
@@ -192,6 +196,52 @@ impl BookLanguage {
     }
 }
 
+// === Reading direction and mode ==============================================
+
+/// The direction a book's own file says it is read in; stored as text in
+/// `books.reading_direction`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReadingDirection {
+    Rtl,
+    Ltr,
+}
+
+impl ReadingDirection {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ReadingDirection::Rtl => "rtl",
+            ReadingDirection::Ltr => "ltr",
+        }
+    }
+}
+
+/// How a user reads a series' books: page by page right to left or left to right, or the pages
+/// in one scrolling column; stored as text in `reading_modes.mode`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadingMode {
+    Rtl,
+    Ltr,
+    Continuous,
+}
+
+impl ReadingMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ReadingMode::Rtl => "rtl",
+            ReadingMode::Ltr => "ltr",
+            ReadingMode::Continuous => "continuous",
+        }
+    }
+
+    /// The mode `name` names, as [`as_str`](Self::as_str) writes it; `None` for any other text.
+    pub fn from_name(name: &str) -> Option<Self> {
+        [Self::Rtl, Self::Ltr, Self::Continuous]
+            .into_iter()
+            .find(|mode| mode.as_str() == name)
+    }
+}
+
 // === Book metadata model =====================================================
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BookMetadata {
@@ -211,6 +261,8 @@ pub struct BookMetadata {
     pub file_hash: Option<String>,
     pub last_modified: Option<SystemTime>,
     pub file_size: Option<u64>,
+    /// The direction the file states; `None` when it states none.
+    pub reading_direction: Option<ReadingDirection>,
 }
 
 pub enum BookDatabaseColumns {
@@ -230,6 +282,7 @@ pub enum BookDatabaseColumns {
     FileHash,
     LastModified,
     FileSize,
+    ReadingDirection,
 }
 
 impl AsRef<str> for BookDatabaseColumns {
@@ -251,6 +304,7 @@ impl AsRef<str> for BookDatabaseColumns {
             BookDatabaseColumns::FileHash => "file_hash",
             BookDatabaseColumns::LastModified => "last_modified",
             BookDatabaseColumns::FileSize => "file_size",
+            BookDatabaseColumns::ReadingDirection => "reading_direction",
         }
     }
 }

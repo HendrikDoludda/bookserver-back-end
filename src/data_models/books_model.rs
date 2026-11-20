@@ -100,6 +100,7 @@ mod tests {
             file_hash: Some("abc".to_string()),
             last_modified: Some(UNIX_EPOCH + Duration::from_secs(1_700_000_000)),
             file_size: Some(2048),
+            reading_direction: None,
         }
     }
 

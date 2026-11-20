@@ -825,7 +825,11 @@ mod tests {
     #[test]
     fn remove_entry_refuses_the_junction_tables() {
         let conn = memory_connection();
-        for junction in [DatabaseTypes::LibraryElements, DatabaseTypes::Translations] {
+        for junction in [
+            DatabaseTypes::LibraryElements,
+            DatabaseTypes::Translations,
+            DatabaseTypes::ReadingModes,
+        ] {
             let result = Database::remove_entry_with_connection(&conn, junction.clone(), 1);
             assert!(
                 matches!(result, Err(DatabaseError::NoSingleKeyColumn)),

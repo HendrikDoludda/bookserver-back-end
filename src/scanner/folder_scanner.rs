@@ -19,6 +19,7 @@ use crate::data_models::models::{
 };
 use crate::db::Database;
 use crate::error_types::{DatabaseError, FolderScannerError};
+use crate::scanner::comic_info;
 use crate::scanner::cover_image_retriever::get_cover_image;
 
 // Filename patterns, compiled once on first use and then reused.
@@ -137,6 +138,7 @@ fn create_book_entry(
         format.clone(),
         &file_hash.clone().unwrap_or_default(),
     );
+    let reading_direction = comic_info::reading_direction(&format, &final_path);
 
     let metadata_entry = BookMetadata {
         title: parsed_name.title,
@@ -155,6 +157,7 @@ fn create_book_entry(
         file_hash,
         last_modified: metadata.modified_date,
         file_size: metadata.file_size,
+        reading_direction,
     };
 
     db.insert(&metadata_entry)
@@ -366,4 +369,48 @@ fn create_library_entry(name: String, db: &Database) -> Result<i64, DatabaseErro
         description: None,
     };
     db.insert(&library_entry)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::{TempDatabase, TempDir};
+
+    const RIGHT_TO_LEFT: &[u8] = b"<ComicInfo><Manga>YesAndRightToLeft</Manga></ComicInfo>";
+
+    fn stored_direction(db: &Database, file_path: &Path) -> Option<String> {
+        db.setup_new_transaction(|conn| {
+            Ok(conn
+                .query_row(
+                    "SELECT reading_direction FROM books WHERE file_path = ?1",
+                    [file_path.to_string_lossy()],
+                    |row| row.get(0),
+                )
+                .unwrap())
+        })
+        .unwrap()
+    }
+
+    // The CBZs' pages are no real images, so the cover step stops before it would write into
+    // `./cover_images/`.
+    #[test]
+    fn a_scanned_cbz_keeps_the_direction_its_comic_info_states() {
+        let dir = TempDir::new();
+        let temp = TempDatabase::open();
+        let library_id = create_library_entry("manga".to_string(), &temp.db).unwrap();
+        let berserk = dir.write_cbz(
+            "Berserk v01.cbz",
+            &[
+                ("001.jpg", b"not a picture"),
+                ("ComicInfo.xml", RIGHT_TO_LEFT),
+            ],
+        );
+        let pluto = dir.write_cbz("Pluto v01.cbz", &[("001.jpg", b"not a picture")]);
+
+        create_book_entry(&berserk, &temp.db, library_id).unwrap();
+        create_book_entry(&pluto, &temp.db, library_id).unwrap();
+
+        assert_eq!(stored_direction(&temp.db, &berserk).as_deref(), Some("rtl"));
+        assert_eq!(stored_direction(&temp.db, &pluto), None);
+    }
 }

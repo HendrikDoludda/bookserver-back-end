@@ -17,8 +17,8 @@ impl Insert for BookMetadata {
     fn insert(&self, conn: &Connection) -> Result<i64, DatabaseError> {
         let query = "INSERT INTO books (title, author, format, language, cover_image, \
             description, tags, file_path, page_count, volume_number, chapter_number, \
-            page_number, file_hash, last_modified, file_size, series) \
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)";
+            page_number, file_hash, last_modified, file_size, series, reading_direction) \
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)";
 
         let params = params![
             self.title.clone(),
@@ -36,7 +36,8 @@ impl Insert for BookMetadata {
             self.file_hash.clone(),
             self.last_modified.and_then(checked_unix_time),
             self.file_size.map(|size| size as i64),
-            self.series
+            self.series,
+            self.reading_direction
         ];
 
         conn.execute(query, params).map_err(logged(
@@ -236,7 +237,7 @@ mod tests {
     use crate::{
         database_related_scripts::db::Database,
         models::{
-            BookFormat, BookLanguage, DatabaseTypes, LibraryType, QuerySeparator,
+            BookFormat, BookLanguage, DatabaseTypes, LibraryType, QuerySeparator, ReadingDirection,
             RecoveryCodesColumns, Role, SessionsDatabaseColumns, TOTPDatabaseColumns,
             UserDatabaseColumns, UserSettingsDatabaseColumns,
         },
@@ -282,6 +283,7 @@ mod tests {
             file_hash: None,
             last_modified: None,
             file_size: None,
+            reading_direction: None,
         }
     }
 
@@ -308,6 +310,7 @@ mod tests {
             file_hash: Some("abc".to_string()),
             last_modified: Some(at(1_700_000_000)),
             file_size: Some(1_048_576),
+            reading_direction: Some(ReadingDirection::Rtl),
         };
         let id = Database::insert_with_connection(&conn, &book).unwrap();
 
@@ -331,6 +334,7 @@ mod tests {
         assert_eq!(stored.file_hash.as_deref(), Some("abc"));
         assert_eq!(stored.last_modified, Some(at(1_700_000_000)));
         assert_eq!(stored.file_size, Some(1_048_576));
+        assert_eq!(stored.reading_direction, Some(ReadingDirection::Rtl));
     }
 
     #[test]
@@ -351,6 +355,7 @@ mod tests {
         assert_eq!(stored.series, None);
         assert_eq!(stored.file_hash, None);
         assert_eq!(stored.file_size, None);
+        assert_eq!(stored.reading_direction, None);
     }
 
     #[test]

@@ -4,6 +4,7 @@ pub mod db_email_codes;
 pub mod db_from_row;
 pub mod db_login_challenges;
 pub mod db_login_throttle;
+pub mod db_reading_modes;
 pub mod db_search;
 pub mod db_translations;
 pub mod db_update;

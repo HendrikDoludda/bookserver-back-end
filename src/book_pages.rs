@@ -133,12 +133,13 @@ fn nth_page<T>(pages: Vec<T>, number: usize) -> Result<T, PageError> {
     pages.into_iter().nth(index).ok_or(PageError::NoSuchPage)
 }
 
-fn open_archive(path: &Path) -> Result<ZipArchive<File>, PageError> {
+pub(crate) fn open_archive(path: &Path) -> Result<ZipArchive<File>, PageError> {
     let file = File::open(path).map_err(missing_or_unreadable)?;
     ZipArchive::new(file).map_err(PageError::Archive)
 }
 
-fn read_entry(
+/// The entry `name` of `archive`, read whole; one larger than `max_bytes` is refused.
+pub(crate) fn read_entry(
     archive: &mut ZipArchive<File>,
     name: &str,
     max_bytes: u64,

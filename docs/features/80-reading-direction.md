@@ -9,9 +9,9 @@ the rest. EPUB lays out its own text and gets no button; [handedness](79-handedn
 moves where the button sits.
 
 ## Build
-- [ ] 1 h · Table of each user's reading mode per series: `(user_id, series_id)` as primary key, both declared foreign keys with `ON DELETE CASCADE`, the mode stored as text from a Rust enum (`rtl` / `ltr` / `continuous`) [DB]
-- [ ] 0.5 h · Nullable `books.reading_direction` (`rtl` / `ltr`): the direction the file states, NULL when it states none [DB]
-- [ ] 2 h · Scanner fills `books.reading_direction` from a `ComicInfo.xml` — inside a CBZ, or in an image folder: `<Manga>YesAndRightToLeft</Manga>` is `rtl`, `<Manga>No</Manga>` is `ltr` [BE]
+- [x] 1 h · Table of each user's reading mode per series: `(user_id, series_id)` as primary key, both declared foreign keys with `ON DELETE CASCADE`, the mode stored as text from a Rust enum (`rtl` / `ltr` / `continuous`) [DB]
+- [x] 0.5 h · Nullable `books.reading_direction` (`rtl` / `ltr`): the direction the file states, NULL when it states none [DB]
+- [x] 2 h · Scanner fills `books.reading_direction` from a `ComicInfo.xml` — inside a CBZ, or in an image folder: `<Manga>YesAndRightToLeft</Manga>` is `rtl`, `<Manga>No</Manga>` is `ltr` [BE]
 - [ ] 1 h · `GET /books/{id}` answers the mode the calling user opens it in: their choice for the book's series, else `books.reading_direction`, else `continuous` for a PDF and `ltr` for the rest [BE]
 - [ ] 1 h · `PUT /api/v1/series/{id}/reading_mode` with `{"mode": …}` stores the calling user's choice and answers the stored `{"mode": …}`; an unknown mode answers 400 `invalid_reading_mode` (its text in `errors`, en and de), an unknown series 404 `not_found` [BE]
 - [x] 0.5 h · Texts: the button, the three modes and a failed save in the `reader` namespace, in `translations/en/frontend/` and `translations/de/frontend/` [BE]

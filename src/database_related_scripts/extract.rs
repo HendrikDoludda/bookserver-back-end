@@ -126,7 +126,7 @@ impl Extract for BookMetadata {
     const KEY: &'static str = "id";
     const COLUMNS: &'static str = "id, title, author, format, language, cover_image, \
         description, tags, file_path, page_count, volume_number, chapter_number, \
-        page_number, file_hash, last_modified, file_size, series";
+        page_number, file_hash, last_modified, file_size, series, reading_direction";
 }
 
 impl Extract for BookSeriesMetadata {

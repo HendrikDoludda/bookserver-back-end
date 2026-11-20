@@ -410,6 +410,7 @@ dependencies = [
  "natord",
  "once_cell",
  "pdfium-render",
+ "quick-xml 0.41.0",
  "r2d2",
  "r2d2_sqlite",
  "rand 0.10.2",

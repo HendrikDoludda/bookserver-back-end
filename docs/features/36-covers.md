@@ -18,4 +18,6 @@ nothing sets yet — else its first book's.
 - [ ] 3 h · EPUB: take the cover the OPF manifest names instead of `epub.images.first()`, and stop deriving the file extension from the media type (`image/svg+xml` becomes `.svg+xml`) [BE]
 - [ ] 1 h · When hashing a file fails, its cover is written to `./cover_images.jpg` — one file beside the cover folder, shared by every such book — because the empty hash is joined to the folder path and `with_extension` renames the folder. Skip the cover when there is no hash [BE]
 - [ ] 1 h · Check for an existing cover before extracting: CBZ never checks, and PDF renders the page before it checks [BE]
+- [ ] 1 h · Make the cover folder configurable instead of `./cover_images/` in the working directory, so a server started elsewhere, and a test of the scanner, don't write covers where they were started [BE]
+- [ ] 0.5 h · Check that an image folder's first file is an image (`image::guess_format`, as for a CBZ) before copying it as the cover [BE]
 - [ ] 0.5 h · Check by hand: the cover extracted from a real `.epub` is the book's actual cover

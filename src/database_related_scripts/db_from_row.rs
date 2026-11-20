@@ -54,6 +54,7 @@ impl FromRow for BookMetadata {
             last_modified: time,
             file_size,
             series: row.get("series")?,
+            reading_direction: row.get("reading_direction")?,
         })
     }
 }

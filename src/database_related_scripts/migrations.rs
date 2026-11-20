@@ -14,11 +14,18 @@ struct Migration {
 // the binary as a &'static str. That means the migrations/ folder does not
 // need to ship next to the executable — the SQL travels inside it.
 // The path is resolved relative to THIS source file.
-const MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    name: "initial_schema",
-    sql: include_str!("../../migrations/0001_initial_schema.sql"),
-}];
+const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        name: "initial_schema",
+        sql: include_str!("../../migrations/0001_initial_schema.sql"),
+    },
+    Migration {
+        version: 2,
+        name: "reading_modes",
+        sql: include_str!("../../migrations/0002_reading_modes.sql"),
+    },
+];
 
 // Apply every migration that has not yet been recorded in `schema_migrations`.
 // Each migration runs inside its own transaction: if anything inside the SQL
@@ -102,6 +109,7 @@ pub fn run(conn: &mut Connection) -> Result<(), DatabaseError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::database_related_scripts::db::configure;
     use crate::test_support::{insert_user, memory_connection, migrated_connection};
     use rusqlite::params;
 
@@ -275,6 +283,7 @@ mod tests {
             ("books", "last_modified"),
             ("books", "file_size"),
             ("books", "series"),
+            ("books", "reading_direction"),
             ("library", "cover_image"),
             ("library", "description"),
             ("series", "description"),
@@ -310,6 +319,153 @@ mod tests {
                 .count();
             assert_eq!(columns, listed as i64, "every column of {table} is listed");
         }
+    }
+
+    #[test]
+    fn a_database_of_the_first_schema_gets_the_second_and_keeps_its_books() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        configure(&conn).unwrap();
+        // As a server of the first schema left it.
+        conn.execute_batch(MIGRATIONS[0].sql).unwrap();
+        conn.execute(
+            "CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, \
+             applied_at INTEGER NOT NULL)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO schema_migrations (version, applied_at) VALUES (1, 0)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO books (title, author, format, language, tags, file_path) \
+             VALUES ('Berserk', 'Kentaro Miura', 'cbz', 'ja', '', '/books/Berserk v01.cbz')",
+            [],
+        )
+        .unwrap();
+        let versions = |conn: &Connection| -> Vec<i64> {
+            conn.prepare("SELECT version FROM schema_migrations ORDER BY version")
+                .unwrap()
+                .query_map([], |row| row.get(0))
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap()
+        };
+
+        run(&mut conn).unwrap();
+
+        let (title, direction): (String, Option<String>) = conn
+            .query_row("SELECT title, reading_direction FROM books", [], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
+            .unwrap();
+        assert_eq!(title, "Berserk");
+        assert_eq!(direction, None, "a book scanned before states no direction");
+        let modes: i64 = conn
+            .query_row("SELECT COUNT(*) FROM reading_modes", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(modes, 0);
+        assert_eq!(versions(&conn), [1, 2]);
+
+        run(&mut conn).unwrap();
+        assert_eq!(
+            versions(&conn),
+            [1, 2],
+            "the next start applies nothing again"
+        );
+    }
+
+    #[test]
+    fn a_books_reading_direction_is_rtl_ltr_or_none() {
+        let conn = memory_connection();
+        let insert = |direction: Option<&str>, path: &str| {
+            conn.execute(
+                "INSERT INTO books (title, author, format, language, tags, file_path, \
+                 reading_direction) VALUES ('t', 'a', 'cbz', 'ja', '', ?1, ?2)",
+                params![path, direction],
+            )
+        };
+        assert!(insert(Some("rtl"), "/books/a.cbz").is_ok());
+        assert!(insert(Some("ltr"), "/books/b.cbz").is_ok());
+        assert!(insert(None, "/books/c.cbz").is_ok());
+        for refused in ["continuous", "RTL", ""] {
+            assert!(
+                insert(Some(refused), &format!("/books/{refused}-d.cbz")).is_err(),
+                "{refused:?} must be refused"
+            );
+        }
+    }
+
+    fn insert_series(conn: &Connection, name: &str) -> i64 {
+        conn.execute("INSERT INTO series (name) VALUES (?1)", [name])
+            .unwrap();
+        conn.last_insert_rowid()
+    }
+
+    fn add_reading_mode(
+        conn: &Connection,
+        user_id: i64,
+        series_id: i64,
+        mode: &str,
+    ) -> rusqlite::Result<usize> {
+        conn.execute(
+            "INSERT INTO reading_modes (user_id, series_id, mode) VALUES (?1, ?2, ?3)",
+            params![user_id, series_id, mode],
+        )
+    }
+
+    #[test]
+    fn a_reading_mode_is_rtl_ltr_or_continuous_and_one_per_user_and_series() {
+        let conn = memory_connection();
+        let alice = insert_user(&conn, "alice");
+        let berserk = insert_series(&conn, "berserk");
+
+        for refused in ["sideways", "RTL", ""] {
+            assert!(
+                add_reading_mode(&conn, alice, berserk, refused).is_err(),
+                "{refused:?} must be refused"
+            );
+        }
+        assert!(add_reading_mode(&conn, alice, berserk, "continuous").is_ok());
+        assert!(
+            add_reading_mode(&conn, alice, berserk, "rtl").is_err(),
+            "one mode per user and series"
+        );
+        assert!(
+            add_reading_mode(&conn, alice, berserk + 1, "rtl").is_err(),
+            "only a series that exists"
+        );
+    }
+
+    #[test]
+    fn deleting_a_user_or_a_series_deletes_only_their_reading_modes() {
+        let conn = memory_connection();
+        let alice = insert_user(&conn, "alice");
+        let bob = insert_user(&conn, "bob");
+        let berserk = insert_series(&conn, "berserk");
+        let monster = insert_series(&conn, "monster");
+        for user_id in [alice, bob] {
+            for series_id in [berserk, monster] {
+                add_reading_mode(&conn, user_id, series_id, "rtl").unwrap();
+            }
+        }
+        let left = || -> Vec<(i64, i64)> {
+            conn.prepare("SELECT user_id, series_id FROM reading_modes ORDER BY user_id, series_id")
+                .unwrap()
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap()
+        };
+
+        conn.execute("DELETE FROM users WHERE id = ?1", [alice])
+            .unwrap();
+        assert_eq!(left(), [(bob, berserk), (bob, monster)]);
+
+        conn.execute("DELETE FROM series WHERE id = ?1", [berserk])
+            .unwrap();
+        assert_eq!(left(), [(bob, monster)]);
     }
 
     #[test]
