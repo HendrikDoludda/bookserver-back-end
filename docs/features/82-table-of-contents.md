@@ -12,4 +12,6 @@ to the chosen entry. A book without one shows no button.
 - [ ] 1.5 h · Going to an entry in the flowing EPUB reader: the first block at or after its anchor, else its file's first block, put at the top of the screen as in [81](81-reader-view-settings.md) [FE]
 - [ ] 0.5 h · Going to an entry in the fixed-layout EPUB reader: the page made from its file, through `PageTurner.turnTo` [FE]
 - [ ] 1.5 h · The PDF outline in the contents list: pdfrx's `PdfDocument.loadOutline()` — each node's title and children — and choosing one goes to its `PdfDest` (`PdfViewerController.goToDest`) [FE]
-- [ ] 0.5 h · Check by hand: a novel's contents go to the right chapter, the cookbook's to the right recipe page and a PDF's outline to the right page; a book without contents shows no button
+- [ ] 1 h · A link in a flowing EPUB's text to a place in the book — a footnote, a contents page inside it — goes there as a contents entry does (`onTapUrl` in `epub_reader.dart`'s `_BookPictures`); a link to anywhere else still does nothing [FE]
+- [ ] 1 h · A link inside a PDF to one of its pages goes there: pdfrx's `linkHandlerParams`, each through `goToDest`; a link to anywhere else does nothing [FE]
+- [ ] 0.5 h · Check by hand: a novel's contents go to the right chapter, the cookbook's to the right recipe page and a PDF's outline to the right page; a book without contents shows no button; a footnote link in a novel and a link on a PDF's own contents page go to their place
