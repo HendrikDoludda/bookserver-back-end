@@ -64,11 +64,14 @@ pub struct ReadingModeSetting {
     pub mode: ReadingMode,
 }
 
-/// One entry of a book's page list.
+/// One entry of a book's page list. `width` and `height` are the image's pixels as stored (EXIF
+/// rotation isn't applied), `None` when its header can't be read.
 #[derive(Debug, Serialize)]
 pub struct PageSummary {
     /// Counted from 1, as `GET /books/{id}/pages/{number}` takes it.
     pub number: usize,
+    pub width: Option<usize>,
+    pub height: Option<usize>,
 }
 
 impl From<BookMetadata> for BookSummary {

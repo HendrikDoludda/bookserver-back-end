@@ -9,6 +9,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use imagesize::{ImageError, ImageResult, ImageSize};
 use zip::ZipArchive;
 
 use crate::{error_types::PageError, models::BookFormat};
@@ -16,6 +17,13 @@ use crate::{error_types::PageError, models::BookFormat};
 /// The largest page read out of an archive. Far above a real comic page (a 600-dpi colour scan is
 /// about 30 MB), yet small enough that a few pages at once can't exhaust a home server's memory.
 pub const MAX_PAGE_BYTES: u64 = 64 * 1024 * 1024;
+
+/// The first read of an archive entry for its size: holds the header of nearly every page.
+const FIRST_SIZE_READ: usize = 16 * 1024;
+
+/// How far into an archive entry its size is looked for. A JPEG's size comes after its EXIF and
+/// colour-profile blocks, which seldom reach more than a few hundred kilobytes.
+const MAX_SIZE_READ: usize = 1024 * 1024;
 
 /// What a page is served from.
 #[derive(Debug, PartialEq)]
@@ -29,11 +37,22 @@ pub enum PageContent {
     },
 }
 
-/// How many pages the book at `path` has.
-pub fn page_count(format: &BookFormat, path: &Path) -> Result<usize, PageError> {
+/// Each page's width and height in pixels, in page order; `None` for a page whose image header
+/// can't be read. As the image stores them: EXIF rotation isn't applied.
+pub fn page_sizes(format: &BookFormat, path: &Path) -> Result<Vec<Option<ImageSize>>, PageError> {
+    // `image` reads a whole JPEG to answer its size; `imagesize` reads only the header.
     match format {
-        BookFormat::ImageComic => Ok(folder_pages(path)?.len()),
-        BookFormat::Cbz => Ok(archive_pages(&open_archive(path)?).len()),
+        BookFormat::ImageComic => Ok(folder_pages(path)?
+            .iter()
+            .map(|page| usable(imagesize::size(page)))
+            .collect()),
+        BookFormat::Cbz => {
+            let mut archive = open_archive(path)?;
+            Ok(archive_pages(&archive)
+                .iter()
+                .map(|(name, _)| entry_size(&mut archive, name))
+                .collect())
+        }
         BookFormat::Pdf | BookFormat::Epub | BookFormat::None => Err(PageError::NotAnImageBook),
     }
 }
@@ -164,6 +183,38 @@ pub(crate) fn read_entry(
     Ok(bytes)
 }
 
+/// The size of the archive entry `name`, from as little of its start as holds the header. A zip
+/// entry can't seek past the blocks before it, so the read grows fourfold until the header fits.
+fn entry_size(archive: &mut ZipArchive<File>, name: &str) -> Option<ImageSize> {
+    let mut entry = archive.by_name(name).ok()?;
+    let mut bytes = Vec::new();
+    let mut limit = FIRST_SIZE_READ;
+    loop {
+        let wanted = limit - bytes.len();
+        let read = entry
+            .by_ref()
+            .take(wanted as u64)
+            .read_to_end(&mut bytes)
+            .ok()?;
+        match imagesize::blob_size(&bytes) {
+            // The header runs on past what was read, and the entry holds more.
+            Err(ImageError::IoError(error))
+                if error.kind() == io::ErrorKind::UnexpectedEof
+                    && read == wanted
+                    && limit < MAX_SIZE_READ =>
+            {
+                limit *= 4;
+            }
+            size => return usable(size),
+        }
+    }
+}
+
+/// A size that was read and has an area: a reader lays a page out by its shape.
+fn usable(size: ImageResult<ImageSize>) -> Option<ImageSize> {
+    size.ok().filter(|size| size.width > 0 && size.height > 0)
+}
+
 fn missing_or_unreadable(error: io::Error) -> PageError {
     if error.kind() == io::ErrorKind::NotFound {
         PageError::BookMissing
@@ -174,11 +225,42 @@ fn missing_or_unreadable(error: io::Error) -> PageError {
 
 #[cfg(test)]
 mod tests {
+    use image::ImageFormat;
+
     use super::*;
-    use crate::test_support::TempDir;
+    use crate::test_support::{encoded_image, TempDir};
 
     fn names(paths: &[PathBuf]) -> Vec<&str> {
         paths.iter().map(|path| file_name(path)).collect()
+    }
+
+    fn size(width: usize, height: usize) -> Option<ImageSize> {
+        Some(ImageSize { width, height })
+    }
+
+    /// Writes `pages` as an image folder and as a CBZ; answers each book's format and path.
+    fn as_both_kinds(dir: &TempDir, pages: &[(&str, &[u8])]) -> [(BookFormat, PathBuf); 2] {
+        for (name, contents) in pages {
+            dir.write(&format!("folder/{name}"), contents);
+        }
+        let cbz = dir.write_cbz("book.cbz", pages);
+        [
+            (BookFormat::ImageComic, dir.path().join("folder")),
+            (BookFormat::Cbz, cbz),
+        ]
+    }
+
+    /// `jpeg` with `blocks` colour-profile (APP2) blocks of 64 KiB after its start marker, where a
+    /// large ICC profile puts them: before the block that holds the size.
+    fn behind_blocks(jpeg: &[u8], blocks: usize) -> Vec<u8> {
+        let mut bytes = jpeg[..2].to_vec();
+        for _ in 0..blocks {
+            // A block's length counts its own two bytes; 0xFFFF is the most it can say.
+            bytes.extend_from_slice(&[0xFF, 0xE2, 0xFF, 0xFF]);
+            bytes.extend_from_slice(&[0; 0xFFFF - 2]);
+        }
+        bytes.extend_from_slice(&jpeg[2..]);
+        bytes
     }
 
     #[test]
@@ -201,7 +283,11 @@ mod tests {
             names(&folder_pages(&book).unwrap()),
             ["1.png", "2.JPG", "10.jpg"]
         );
-        assert_eq!(page_count(&BookFormat::ImageComic, &book).unwrap(), 3);
+        // The files hold their names, not images, so no page has a size.
+        assert_eq!(
+            page_sizes(&BookFormat::ImageComic, &book).unwrap(),
+            [None, None, None]
+        );
         assert_eq!(
             page(&BookFormat::ImageComic, &book, 3, MAX_PAGE_BYTES).unwrap(),
             PageContent::File(book.join("10.jpg"))
@@ -235,7 +321,7 @@ mod tests {
                 ("cover.webp".to_string(), "image/webp"),
             ]
         );
-        assert_eq!(page_count(&BookFormat::Cbz, &cbz).unwrap(), 4);
+        assert_eq!(page_sizes(&BookFormat::Cbz, &cbz).unwrap().len(), 4);
         assert_eq!(
             page(&BookFormat::Cbz, &cbz, 2, MAX_PAGE_BYTES).unwrap(),
             PageContent::Bytes {
@@ -274,7 +360,7 @@ mod tests {
         let pdf = dir.write("book.pdf", b"%PDF-1.7");
         for format in [BookFormat::Pdf, BookFormat::Epub, BookFormat::None] {
             assert!(matches!(
-                page_count(&format, &pdf),
+                page_sizes(&format, &pdf),
                 Err(PageError::NotAnImageBook)
             ));
             assert!(matches!(
@@ -290,17 +376,88 @@ mod tests {
         let not_a_zip = dir.write("book.cbz", b"Rar! renamed to cbz");
 
         assert!(matches!(
-            page_count(&BookFormat::ImageComic, &dir.path().join("gone")),
+            page_sizes(&BookFormat::ImageComic, &dir.path().join("gone")),
             Err(PageError::BookMissing)
         ));
         assert!(matches!(
-            page_count(&BookFormat::Cbz, &dir.path().join("gone.cbz")),
+            page_sizes(&BookFormat::Cbz, &dir.path().join("gone.cbz")),
             Err(PageError::BookMissing)
         ));
         assert!(matches!(
-            page_count(&BookFormat::Cbz, &not_a_zip),
+            page_sizes(&BookFormat::Cbz, &not_a_zip),
             Err(PageError::Archive(_))
         ));
+    }
+
+    #[test]
+    fn each_pages_size_is_read_from_its_image_in_page_order() {
+        let dir = TempDir::new();
+        let png = encoded_image(ImageFormat::Png, 30, 20);
+        let jpeg = encoded_image(ImageFormat::Jpeg, 20, 30);
+        let webp = encoded_image(ImageFormat::WebP, 7, 5);
+        let pages: [(&str, &[u8]); 4] = [
+            ("10.png", &png),
+            ("2.JPG", &jpeg),
+            ("1.webp", &webp),
+            ("notes.txt", b"not a page"),
+        ];
+
+        for (format, path) in as_both_kinds(&dir, &pages) {
+            assert_eq!(
+                page_sizes(&format, &path).unwrap(),
+                [size(7, 5), size(20, 30), size(30, 20)],
+                "{format:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_jpegs_size_behind_large_blocks_is_found_and_inside_a_cbz_only_up_to_the_cap() {
+        let dir = TempDir::new();
+        let jpeg = encoded_image(ImageFormat::Jpeg, 40, 60);
+        let (deep, too_deep) = (behind_blocks(&jpeg, 2), behind_blocks(&jpeg, 17));
+        // `deep` needs the read to grow twice; `too_deep` puts the size past the cap.
+        assert!(deep.len() > 4 * FIRST_SIZE_READ && too_deep.len() > MAX_SIZE_READ);
+        let pages: [(&str, &[u8]); 2] = [("1.jpg", &deep), ("2.jpg", &too_deep)];
+
+        let [(folder_format, folder), (cbz_format, cbz)] = as_both_kinds(&dir, &pages);
+
+        assert_eq!(page_sizes(&cbz_format, &cbz).unwrap(), [size(40, 60), None]);
+        // A file on disk is read by seeking past the blocks, so no cap applies.
+        assert_eq!(
+            page_sizes(&folder_format, &folder).unwrap(),
+            [size(40, 60), size(40, 60)]
+        );
+    }
+
+    #[test]
+    fn a_page_whose_size_cannot_be_read_has_none_and_the_others_keep_theirs() {
+        let dir = TempDir::new();
+        let png = encoded_image(ImageFormat::Png, 30, 20);
+        let jpeg = encoded_image(ImageFormat::Jpeg, 20, 30);
+        // A baseline JPEG's size block: its marker, then its length for three colour channels.
+        let size_block = jpeg
+            .windows(4)
+            .position(|bytes| bytes == [0xFF, 0xC0, 0x00, 0x11])
+            .expect("the JPEG's size block");
+        // A PNG states its width in bytes 16 to 19.
+        let mut no_width = png.clone();
+        no_width[16..20].fill(0);
+        let pages: [(&str, &[u8]); 5] = [
+            ("1.jpg", b"not an image"),
+            ("2.png", &png),
+            ("3.jpg", &jpeg[..size_block]),
+            ("4.png", &no_width),
+            ("5.webp", b""),
+        ];
+
+        for (format, path) in as_both_kinds(&dir, &pages) {
+            assert_eq!(
+                page_sizes(&format, &path).unwrap(),
+                [None, size(30, 20), None, None, None],
+                "{format:?}"
+            );
+        }
     }
 
     #[test]

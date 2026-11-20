@@ -33,6 +33,8 @@ epub-parser = "0.3.4"
 # demand functions an installed binary lacks, which panics only when a PDF is scanned.
 pdfium-render = { version = "0.9.4", default-features = false, features = ["pdfium_7543", "image_latest", "thread_safe"] }
 image = "0.25.10"
+# Only the formats a page can be (`page_media_type`), so no other parser runs on a book's files.
+imagesize = { version = "0.15.0", default-features = false, features = ["jpeg", "png", "webp"] }
 zip = "8.6.0"
 quick-xml = "0.41.0"
 tower-http = {version = "0.7.1", features = ["full"]}

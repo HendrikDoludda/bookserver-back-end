@@ -128,18 +128,25 @@ pub async fn request_file(
     Ok(serve_file(Path::new(&book.file_path), request).await)
 }
 
-/// List the pages of an image-folder or CBZ book, numbered from 1.
+/// List the pages of an image-folder or CBZ book, numbered from 1, each with its size.
 pub async fn get_pages(
     _session: AuthSession,
     State(db): State<Arc<Database>>,
     PathParams(id): PathParams<i64>,
 ) -> Result<Json<Vec<PageSummary>>, AppErrors> {
-    // TODO: each page's width and height, so the reader can lay pages out before they load.
     let book = read_book(db, id).await?;
-    let count =
-        blocking(move || book_pages::page_count(&book.format, Path::new(&book.file_path))).await?;
+    let sizes =
+        blocking(move || book_pages::page_sizes(&book.format, Path::new(&book.file_path))).await?;
     Ok(Json(
-        (1..=count).map(|number| PageSummary { number }).collect(),
+        sizes
+            .into_iter()
+            .zip(1..)
+            .map(|(size, number)| PageSummary {
+                number,
+                width: size.map(|size| size.width),
+                height: size.map(|size| size.height),
+            })
+            .collect(),
     ))
 }
 

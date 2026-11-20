@@ -19,7 +19,7 @@ moves where the button sits.
 - [ ] 1 h · Reading-mode button in the reader bar ([83](83-app-layout.md)) of the PDF, CBZ and image-folder readers: switches at once and saves the choice with the `PUT` [FE]
 - [ ] 2 h · Right to left and left to right in the comic readers (the page turner): page order, swipe direction and arrow keys follow the mode [FE]
 - [ ] 3 h · PDF paged modes: pdfrx's `PdfPaging`, pages side by side fitted to the window — right to left through a mirrored layout — and the arrow keys turn pages [FE]
-- [ ] 2.5 h · Each page's width and height in the page list (`GET /books/{id}/pages`), read from each image's header rather than the whole file with `imagesize` 0.15, so CBZ and image-folder continuous scroll lays pages out before they load (TODO in `get_pages`); null when unreadable; EXIF rotation not applied [BE]
+- [x] 2.5 h · Each page's width and height in the page list (`GET /books/{id}/pages`), read from each image's header rather than the whole file with `imagesize` 0.15, so CBZ and image-folder continuous scroll lays pages out before they load; null when unreadable; EXIF rotation not applied [BE]
 - [ ] 2 h · Continuous scroll for CBZ and image-folder books, as the PDF reader already scrolls: the pages run top to bottom in one scrolling column, with no zoom [FE]
 - [ ] 2 h · Page-turn tap zones as one layout shared by the readers; in the two paged modes the "next page" edge follows the mode; the middle still shows and hides the reader bar [FE]
 - [ ] 0.5 h · Check by hand: a right-to-left manga goes forward by swiping right and tapping the left edge; the chosen mode carries over to the next volume and to another device

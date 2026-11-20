@@ -130,7 +130,8 @@ mod tests {
             email_helper::Mailer,
         },
         test_support::{
-            code_in, insert_texts, insert_user, TempDatabase, TempDir, TEST_SETUP_CODE,
+            code_in, encoded_image, insert_texts, insert_user, TempDatabase, TempDir,
+            TEST_SETUP_CODE,
         },
     };
 
@@ -976,8 +977,11 @@ mod tests {
             let uri = format!("/api/v1/books/{book}/pages");
             let (status, _, body) = call(&app, authorized("GET", &uri, &member, None)).await;
             assert_eq!(status, StatusCode::OK, "{uri}");
+            // The pages hold words, not images, so none has a size.
             let numbers: Vec<serde_json::Value> = (1..=count)
-                .map(|number| serde_json::json!({ "number": number }))
+                .map(
+                    |number| serde_json::json!({ "number": number, "width": null, "height": null }),
+                )
                 .collect();
             assert_eq!(json(&body), serde_json::Value::Array(numbers), "{uri}");
         }
@@ -993,6 +997,59 @@ mod tests {
             assert_eq!(status, StatusCode::OK, "{uri}");
             assert_eq!(headers["content-type"], content_type, "{uri}");
             assert_eq!(body, contents.as_bytes(), "{uri}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_books_page_list_carries_each_pages_size_and_null_where_none_can_be_read() {
+        let temp = TempDatabase::open();
+        let files = TempDir::new();
+        let jpeg = encoded_image(image::ImageFormat::Jpeg, 120, 180);
+        let png = encoded_image(image::ImageFormat::Png, 180, 120);
+        files.write("The Long Road/1.jpg", &jpeg);
+        files.write("The Long Road/2.png", &png);
+        let cbz = files.write_cbz(
+            "A Quiet Sea.cbz",
+            &[("1.png", &png), ("2.jpg", b"broken"), ("3.jpg", &jpeg)],
+        );
+        let folder = files.path().join("The Long Road");
+        let (folder, cbz) = (
+            folder.to_string_lossy().into_owned(),
+            cbz.to_string_lossy().into_owned(),
+        );
+        let (folder_book, cbz_book) = temp
+            .db
+            .setup_new_transaction(move |conn| {
+                Ok((
+                    insert_book_file(conn, "image_comic", &folder),
+                    insert_book_file(conn, "cbz", &cbz),
+                ))
+            })
+            .unwrap();
+        let member = logged_in(&temp, "bob", "member");
+        let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
+
+        for (book, expected) in [
+            (
+                folder_book,
+                serde_json::json!([
+                    { "number": 1, "width": 120, "height": 180 },
+                    { "number": 2, "width": 180, "height": 120 },
+                ]),
+            ),
+            (
+                cbz_book,
+                serde_json::json!([
+                    { "number": 1, "width": 180, "height": 120 },
+                    { "number": 2, "width": null, "height": null },
+                    { "number": 3, "width": 120, "height": 180 },
+                ]),
+            ),
+        ] {
+            let uri = format!("/api/v1/books/{book}/pages");
+            let (status, _, body) = call(&app, authorized("GET", &uri, &member, None)).await;
+            assert_eq!(status, StatusCode::OK, "{uri}");
+            assert_eq!(json(&body), expected, "{uri}");
         }
     }
 

@@ -2,11 +2,12 @@
 
 use std::{
     fs,
-    io::Write,
+    io::{Cursor, Write},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
 
+use image::{DynamicImage, ImageFormat};
 use rusqlite::{params, Connection};
 use uuid::Uuid;
 use zip::{write::SimpleFileOptions, ZipWriter};
@@ -194,6 +195,15 @@ impl TempDatabase {
             totp_cipher: test_cipher(),
         }
     }
+}
+
+/// A black `width` × `height` image, encoded as `format`.
+pub fn encoded_image(format: ImageFormat, width: u32, height: u32) -> Vec<u8> {
+    let mut bytes = Cursor::new(Vec::new());
+    DynamicImage::new_rgb8(width, height)
+        .write_to(&mut bytes, format)
+        .expect("encode the image");
+    bytes.into_inner()
 }
 
 /// A folder path under the system temp directory, unique to the test, deleted with everything in
