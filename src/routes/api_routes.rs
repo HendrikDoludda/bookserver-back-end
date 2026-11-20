@@ -20,6 +20,7 @@ use crate::{
         library::{
             delete_library, get_cover, get_libraries, get_page, get_pages, get_series_children,
             get_series_in_library, request_file, retrieve_metadata, scan_all_directories,
+            set_reading_mode,
         },
         locales::{get_translations, list_locales},
         settings::{get_settings, replace_settings},
@@ -58,6 +59,7 @@ pub fn set_up_routes() -> Router<AppState> {
         )
         .route("/libraries/{id}/series", get(get_series_in_library))
         .route("/series/{id}/books", get(get_series_children))
+        .route("/series/{id}/reading_mode", put(set_reading_mode))
         .route("/books/{id}", get(retrieve_metadata))
         .route("/books/{id}/file", get(request_file))
         .route("/books/{id}/pages", get(get_pages))
@@ -557,8 +559,100 @@ mod tests {
                 "page_number": null,
                 "last_modified": 1700000000,
                 "file_size": 1048576,
+                "reading_mode": "ltr",
             })
         );
+    }
+
+    #[tokio::test]
+    async fn a_book_opens_in_the_callers_mode_for_its_series_over_http() {
+        let temp = TempDatabase::open();
+        let (series, manga, scan) = temp
+            .db
+            .setup_new_transaction(|conn| {
+                conn.execute("INSERT INTO series (name) VALUES ('berserk')", [])
+                    .unwrap();
+                let series = conn.last_insert_rowid();
+                let book = |format: &str, path: &str, direction: Option<&str>| {
+                    conn.execute(
+                        "INSERT INTO books (title, author, format, language, tags, file_path, \
+                         series, reading_direction) \
+                         VALUES ('Berserk', 'Kentaro Miura', ?1, 'ja', '', ?2, ?3, ?4)",
+                        rusqlite::params![format, path, series, direction],
+                    )
+                    .unwrap();
+                    conn.last_insert_rowid()
+                };
+                let manga = book("cbz", "/manga/Berserk v01.cbz", Some("rtl"));
+                let scan = book("pdf", "/manga/Berserk v02.pdf", None);
+                Ok((series, manga, scan))
+            })
+            .unwrap();
+        let alice = logged_in(&temp, "alice", "member");
+        let bob = logged_in(&temp, "bob", "member");
+        let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
+        let mode_of = |book: i64, token: &str| {
+            authorized("GET", &format!("/api/v1/books/{book}"), token, None)
+        };
+        let choose = |series: i64, body: serde_json::Value| {
+            authorized(
+                "PUT",
+                &format!("/api/v1/series/{series}/reading_mode"),
+                &alice,
+                Some(body),
+            )
+        };
+        async fn mode(app: &Router, request: Request<Body>) -> serde_json::Value {
+            let (status, _, body) = call(app, request).await;
+            assert_eq!(status, StatusCode::OK);
+            json(&body)["reading_mode"].clone()
+        }
+
+        assert_eq!(
+            mode(&app, mode_of(manga, &alice)).await,
+            "rtl",
+            "the file's"
+        );
+        assert_eq!(
+            mode(&app, mode_of(scan, &alice)).await,
+            "continuous",
+            "a PDF's"
+        );
+
+        let (status, _, body) =
+            call(&app, choose(series, serde_json::json!({ "mode": "ltr" }))).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(json(&body), serde_json::json!({ "mode": "ltr" }));
+        assert_eq!(mode(&app, mode_of(manga, &alice)).await, "ltr");
+        assert_eq!(
+            mode(&app, mode_of(scan, &alice)).await,
+            "ltr",
+            "the whole series"
+        );
+        assert_eq!(mode(&app, mode_of(manga, &bob)).await, "rtl", "bob's own");
+
+        for (body, key) in [
+            (
+                serde_json::json!({ "mode": "sideways" }),
+                "invalid_reading_mode",
+            ),
+            (serde_json::json!({ "mode": "RTL" }), "invalid_reading_mode"),
+            (serde_json::json!({ "mode": "" }), "invalid_reading_mode"),
+            (serde_json::json!({ "mode": 3 }), "invalid_request"),
+            (serde_json::json!({}), "invalid_request"),
+        ] {
+            let (status, _, answer) = call(&app, choose(series, body.clone())).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+            assert_eq!(json(&answer), serde_json::json!({ "error": key }), "{body}");
+        }
+        let (status, _, answer) = call(
+            &app,
+            choose(series + 1, serde_json::json!({ "mode": "rtl" })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(json(&answer), serde_json::json!({ "error": "not_found" }));
+        assert_eq!(mode(&app, mode_of(manga, &alice)).await, "ltr", "unchanged");
     }
 
     #[tokio::test]
@@ -1654,6 +1748,7 @@ mod tests {
         ("DELETE", "/api/v1/libraries/1"),
         ("GET", "/api/v1/libraries/1/series"),
         ("GET", "/api/v1/series/1/books"),
+        ("PUT", "/api/v1/series/1/reading_mode"),
         ("GET", "/api/v1/books/1"),
         ("GET", "/api/v1/books/1/file"),
         ("GET", "/api/v1/books/1/pages"),

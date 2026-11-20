@@ -15,16 +15,22 @@ use axum::{
 
 use crate::{
     book_pages::{self, PageContent},
-    data_models::books_model::{BookSummary, LibrarySummary, PageSummary, SeriesSummary},
+    data_models::books_model::{
+        BookDetails, BookSummary, LibrarySummary, PageSummary, ReadingModeChange,
+        ReadingModeSetting, SeriesSummary,
+    },
     db::Database,
     error_types::{internal_error_response, AppErrors, DatabaseError, PageError},
     folder_scanner::scan_all_folders,
     models::{BookMetadata, BookSeriesMetadata, DatabaseTypes, LibraryMetadata, WithId},
-    routes::covers::{self, CoverKind},
+    routes::{
+        covers::{self, CoverKind},
+        reading_modes,
+    },
     stream_reader::serve_file,
 };
 
-use super::extractors::{AdminSession, AuthSession, PathParams};
+use super::extractors::{AdminSession, AuthSession, JsonBody, PathParams};
 
 // === Library, series & book handlers =========================================
 
@@ -162,15 +168,38 @@ pub async fn get_page(
     })
 }
 
-/// Return a single book's metadata without streaming the file itself.
+/// Return a single book's metadata, and the mode the calling user opens it in, without streaming
+/// the file itself.
 pub async fn retrieve_metadata(
-    _session: AuthSession,
+    session: AuthSession,
     State(db): State<Arc<Database>>,
     PathParams(id): PathParams<i64>,
-) -> Result<Json<BookSummary>, AppErrors> {
+) -> Result<Json<BookDetails>, AppErrors> {
     // TODO: return metadata for every metadata type, not just books.
-    let book = read_book(db, id).await?;
-    Ok(Json(BookSummary::from(book)))
+    let user_id = session.0.user_id;
+    let (book, reading_mode) = db
+        .read(move |conn| {
+            let book = Database::get_entry_with_connection::<BookMetadata>(conn, id)?;
+            let reading_mode = reading_modes::mode_for(conn, user_id, &book)?;
+            Ok((book, reading_mode))
+        })
+        .await?;
+    Ok(Json(BookDetails {
+        book: BookSummary::from(book),
+        reading_mode,
+    }))
+}
+
+/// `PUT /api/v1/series/{id}/reading_mode`: the calling user's mode for every book of the series;
+/// answers it as stored.
+pub async fn set_reading_mode(
+    session: AuthSession,
+    State(db): State<Arc<Database>>,
+    PathParams(series_id): PathParams<i64>,
+    JsonBody(change): JsonBody<ReadingModeChange>,
+) -> Result<Json<ReadingModeSetting>, AppErrors> {
+    let mode = reading_modes::set_mode(db, session.0.user_id, series_id, &change.mode).await?;
+    Ok(Json(ReadingModeSetting { mode }))
 }
 
 /// Serve the cover a book, a series or a library shows: `kind` is `book`, `series` or `library`.

@@ -217,8 +217,10 @@ impl ReadingDirection {
 }
 
 /// How a user reads a series' books: page by page right to left or left to right, or the pages
-/// in one scrolling column; stored as text in `reading_modes.mode`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// in one scrolling column; stored as text in `reading_modes.mode`, and sent as `"rtl"` / `"ltr"` /
+/// `"continuous"`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ReadingMode {
     Rtl,
     Ltr,
@@ -239,6 +241,15 @@ impl ReadingMode {
         [Self::Rtl, Self::Ltr, Self::Continuous]
             .into_iter()
             .find(|mode| mode.as_str() == name)
+    }
+}
+
+impl From<ReadingDirection> for ReadingMode {
+    fn from(direction: ReadingDirection) -> Self {
+        match direction {
+            ReadingDirection::Rtl => ReadingMode::Rtl,
+            ReadingDirection::Ltr => ReadingMode::Ltr,
+        }
     }
 }
 

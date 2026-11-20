@@ -7,6 +7,7 @@ pub mod email_codes;
 pub mod email_helper;
 pub mod login;
 pub mod password_reset;
+pub mod reading_modes;
 pub mod registration;
 pub mod totp_cipher;
 pub mod totp_management;

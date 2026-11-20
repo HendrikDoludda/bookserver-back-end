@@ -384,6 +384,22 @@ impl SettingsError {
     }
 }
 
+#[derive(Error, Debug)]
+pub enum ReadingModeError {
+    #[error("The reading mode is not rtl, ltr or continuous")]
+    InvalidReadingMode,
+}
+
+impl ReadingModeError {
+    fn status_and_key(&self) -> (StatusCode, &'static str) {
+        match self {
+            ReadingModeError::InvalidReadingMode => {
+                (StatusCode::BAD_REQUEST, "invalid_reading_mode")
+            }
+        }
+    }
+}
+
 /// A shipped translation file that breaks a rule: the server doesn't start with one. `file` is
 /// the path under `translations/`, `key` the dotted name inside the file.
 #[derive(Debug, Error, PartialEq)]
@@ -453,6 +469,8 @@ pub enum AppErrors {
     Translation(#[from] TranslationError),
     #[error(transparent)]
     Pages(#[from] PageError),
+    #[error(transparent)]
+    ReadingMode(#[from] ReadingModeError),
     #[error("The request's body, path or query could not be read")]
     InvalidRequest,
 }
@@ -466,6 +484,7 @@ impl AppErrors {
             AppErrors::Settings(err) => err.status_and_key(),
             AppErrors::Translation(err) => err.status_and_key(),
             AppErrors::Pages(err) => err.status_and_key(),
+            AppErrors::ReadingMode(err) => err.status_and_key(),
             AppErrors::InvalidRequest => (StatusCode::BAD_REQUEST, "invalid_request"),
         }
     }
@@ -653,6 +672,11 @@ mod tests {
                 SettingsError::InvalidLocale.into(),
                 StatusCode::BAD_REQUEST,
                 "invalid_locale",
+            ),
+            (
+                ReadingModeError::InvalidReadingMode.into(),
+                StatusCode::BAD_REQUEST,
+                "invalid_reading_mode",
             ),
             (
                 DatabaseError::EntryNotFound.into(),

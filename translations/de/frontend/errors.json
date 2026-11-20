@@ -10,6 +10,7 @@
   "invalid_email": "Das sieht nicht nach einer E-Mail-Adresse aus.",
   "invalid_locale": "Diese Sprache ist nicht verfügbar.",
   "invalid_or_expired_code": "Dieser Code ist falsch oder abgelaufen.",
+  "invalid_reading_mode": "Diesen Lesemodus gibt es nicht. Ein Update der App kann helfen.",
   "invalid_request": "Der Server konnte diese Anfrage nicht lesen. Ein Update der App kann helfen.",
   "invalid_setup_code": "Der Einrichtungscode ist falsch. Du findest ihn im Server-Log.",
   "invalid_username": "Dieser Benutzername kann nicht verwendet werden.",

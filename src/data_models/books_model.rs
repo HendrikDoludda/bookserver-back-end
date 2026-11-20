@@ -1,8 +1,8 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     db::checked_unix_time,
-    models::{BookMetadata, BookSeriesMetadata, LibraryMetadata},
+    models::{BookMetadata, BookSeriesMetadata, LibraryMetadata, ReadingMode},
 };
 
 /// One library as the library list sends it: its row, and how many series it holds.
@@ -40,6 +40,28 @@ pub struct BookSummary {
     pub page_number: Option<i64>,
     pub last_modified: Option<i64>,
     pub file_size: Option<u64>,
+}
+
+/// One book as `GET /books/{id}` answers it: its summary, and the mode the calling user opens it
+/// in.
+#[derive(Debug, Serialize)]
+pub struct BookDetails {
+    #[serde(flatten)]
+    pub book: BookSummary,
+    pub reading_mode: ReadingMode,
+}
+
+/// `PUT /api/v1/series/{id}/reading_mode`'s body. The mode is text, checked in code: as an enum,
+/// an unknown one would answer `invalid_request` instead of its own key.
+#[derive(Debug, Deserialize)]
+pub struct ReadingModeChange {
+    pub mode: String,
+}
+
+/// `PUT /api/v1/series/{id}/reading_mode`'s answer: the mode as stored.
+#[derive(Debug, Serialize)]
+pub struct ReadingModeSetting {
+    pub mode: ReadingMode,
 }
 
 /// One entry of a book's page list.
