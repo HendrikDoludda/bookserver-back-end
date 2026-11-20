@@ -16,10 +16,16 @@ install is [52](52-packaging-and-deployment.md).
 - [x] 1 h · Refresh the session token when it has less than a minute left, and once after a 401; a refused refresh ends the session, a network failure doesn't [FE]
 - [x] 1 h · Refresh runs one at a time: parallel requests wait for that single refresh instead of each starting their own [FE]
 - [x] 1 h · Placeholder home: the libraries' names from `GET /api/v1/libraries`, with a reload action [FE]
-- [ ] 2 h · Android build — an APK can be sideloaded freely [FE]
-- [ ] 3 h · iOS build — outside the App Store it needs a signing identity, and a free Apple account's signing expires after 7 days, forcing re-installs [FE]
-- [ ] 3 h · macOS and Windows desktop builds — Windows is added with `flutter create --platforms=windows .` and builds only on a Windows machine [FE]
-- [ ] 1 h · Sign macOS debug builds with a free Apple development team, the team ID kept out of git, so a rebuild reads the stored session without a keychain prompt [FE]
+- [x] 2 h · Android build — a universal release APK to sideload, signed with your own release key from `android/key.properties` (outside git); without it a release build stops [FE]
+- [ ] 3 h · iOS release build on your own iPhone and iPad, signed with your free personal Apple team from your personal Mac; the signature lasts 7 days, then the app installs again from that Mac and keeps its session [FE]
+- [ ] 0.5 h · Check by hand on the iPhone, installed from your personal Mac: the release build starts, signs in, opens a PDF, an EPUB and a CBZ, and is still signed in after it was closed; "Open in authenticator app" opens an authenticator app if one is on the phone; the work Mac's iOS simulator still runs the app
+- [ ] 0.5 h · Check by hand on the iPad: the release build installs (iPadOS 15 or newer), starts, signs in and opens a PDF, an EPUB and a CBZ
+- [x] 1 h · macOS release build, zipped to copy onto another Mac [FE]
+- [ ] 2 h · Windows release build — the `windows/` folder, built on a Windows PC with Visual Studio's C++ workload [FE]
+- [x] 2 h · Linux release build — the `linux/` folder, built in Docker on the Mac [FE]
+- [ ] 0.5 h · Check by hand on the Windows PC: the release build starts, signs in, opens a PDF, an EPUB and a CBZ, and is still signed in after a restart
+- [ ] 0.5 h · Check by hand on a Linux desktop: the release build starts, signs in and opens a PDF, an EPUB and a CBZ
+- [ ] 1 h · Sign macOS debug builds with your free personal Apple team on your personal Mac — a per-Mac setting outside git, since the work Mac holds no personal certificate — so a rebuild reads the stored session without a keychain prompt [FE]
 - [ ] ? h · Sign the macOS release build with an Apple Developer Program identity (Developer ID or the Mac App Store), so an update keeps keychain access to the stored session [FE]
 
 ## Open decisions
