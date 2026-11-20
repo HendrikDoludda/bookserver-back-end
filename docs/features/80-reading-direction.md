@@ -1,6 +1,6 @@
 # Reading direction
 
-State: not started
+State: in progress
 
 A button in the PDF, CBZ and image-folder readers switches between right to left, left to right
 and continuous scroll. Each user's choice is kept per series on the server; until there is one,
@@ -14,7 +14,7 @@ moves where the button sits.
 - [ ] 2 h · Scanner fills `books.reading_direction` from a `ComicInfo.xml` — inside a CBZ, or in an image folder: `<Manga>YesAndRightToLeft</Manga>` is `rtl`, `<Manga>No</Manga>` is `ltr` [BE]
 - [ ] 1 h · `GET /books/{id}` answers the mode the calling user opens it in: their choice for the book's series, else `books.reading_direction`, else `continuous` for a PDF and `ltr` for the rest [BE]
 - [ ] 1 h · `PUT /api/v1/series/{id}/reading_mode` with `{"mode": …}` stores the calling user's choice and answers the stored `{"mode": …}`; an unknown mode answers 400 `invalid_reading_mode` (its text in `errors`, en and de), an unknown series 404 `not_found` [BE]
-- [ ] 0.5 h · Texts: the button, the three modes and a failed save in the `reader` namespace, in `translations/en/frontend/` and `translations/de/frontend/` [BE]
+- [x] 0.5 h · Texts: the button, the three modes and a failed save in the `reader` namespace, in `translations/en/frontend/` and `translations/de/frontend/` [BE]
 - [ ] 1 h · The PDF, CBZ and image-folder readers open in the mode `GET /books/{id}` answers [FE]
 - [ ] 1 h · Reading-mode button in the reader bar ([83](83-app-layout.md)) of the PDF, CBZ and image-folder readers: switches at once and saves the choice with the `PUT` [FE]
 - [ ] 2 h · Right to left and left to right in the comic readers (the page turner): page order, swipe direction and arrow keys follow the mode [FE]

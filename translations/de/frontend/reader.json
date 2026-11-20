@@ -1,8 +1,20 @@
 {
+  "contents": "Inhalt",
+  "font_larger": "Größere Schrift",
+  "font_smaller": "Kleinere Schrift",
+  "mode": "Lesemodus",
+  "mode_continuous": "Fortlaufend scrollen",
+  "mode_ltr": "Von links nach rechts",
+  "mode_not_saved": "Der Lesemodus konnte nicht gespeichert werden.",
+  "mode_rtl": "Von rechts nach links",
   "open_failed": "Dieses Buch lässt sich nicht öffnen.",
   "opening": "Das Buch wird geöffnet …",
   "page_failed": "Diese Seite konnte nicht geladen werden.",
   "page_of": "Seite {page} von {count}",
+  "percent": "{percent} %",
   "retry": "Erneut versuchen",
-  "unsupported": "Diese Art von Buch kann die App noch nicht anzeigen."
+  "unsupported": "Diese Art von Buch kann die App noch nicht anzeigen.",
+  "zoom": "Zoom",
+  "zoom_fit_page": "Ganze Seite",
+  "zoom_fit_width": "Seitenbreite"
 }
