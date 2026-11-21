@@ -1,5 +1,10 @@
 {
   "cancel": "Cancel",
+  "choose_cover": "Choose a cover",
+  "cover": "Cover",
+  "@cover": "The picture a series or a library shows in the grids.",
+  "cover_automatic": "Automatic",
+  "@cover_automatic": "The cover the server picks: a series' first book's, a library's first series'.",
   "delete": "Delete",
   "delete_library": "Delete this library?",
   "delete_library_explanation": "Its series and books stay, and so do the files.",

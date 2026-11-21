@@ -1,5 +1,8 @@
 {
   "cancel": "Abbrechen",
+  "choose_cover": "Titelbild wählen",
+  "cover": "Titelbild",
+  "cover_automatic": "Automatisch",
   "delete": "Löschen",
   "delete_library": "Diese Bibliothek löschen?",
   "delete_library_explanation": "Ihre Serien und Bücher bleiben erhalten, ebenso die Dateien.",
