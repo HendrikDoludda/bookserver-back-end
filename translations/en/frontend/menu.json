@@ -1,8 +1,10 @@
 {
   "libraries": "Libraries",
   "@libraries": "Inside a library: the button that shows or hides the list of libraries, and that list's heading.",
+  "manage": "Manage",
+  "@manage": "Admins only: opens the screen for libraries and series.",
   "settings": "Settings",
   "sign_out": "Sign out",
   "user": "Account",
-  "@user": "The button at the top right of the browse screens that opens Settings and Sign out."
+  "@user": "The button at the top right of the browse screens that opens Settings, Manage for admins, and Sign out."
 }
