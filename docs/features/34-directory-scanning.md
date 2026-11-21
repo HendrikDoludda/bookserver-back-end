@@ -2,25 +2,27 @@
 
 State: in progress
 
-The scanner walks the configured directories, parses volume / chapter / page numbers out of
-file names, and creates the book, series and library rows plus a cover for each supported
-file. It works, but it can report success before it is done, swallows per-file errors, and
-never picks up a file that changed.
+The scanner walks the scannable directories ([35](35-scannable-directories.md)), parses volume /
+chapter / page numbers out of file names, and creates the book and series rows plus a cover for
+each supported file. It works, but it can report success before it is done, swallows per-file
+errors, stops at the first unreadable folder, and never picks up a file that changed.
 
 ## Build
-- [ ] 6 h · Run a scan as a job, per the scan-job decision: `POST /scan` answers 202, and `GET /scan/status` (answers 501 until then) reports progress and per-file failures — router state grows from `Arc<Database>` into an `AppState` that also holds the scan status [BE]
-- [ ] 1 h · Wait for every spawned file task before a scan counts as done — `scan_folder` drops the `JoinHandle`s, so the last file can still be in progress when the scan reports success (`futures::future::join_all`; `futures` is already a dependency) [BE]
-- [ ] 2 h · Report per-file failures instead of discarding them — only a task panic is logged; `create_book_entry`'s own errors disappear [BE]
+- [ ] 6 h · Run every scan as a job through one worker that takes requests from a queue: `POST /scan` answers 202, or 409 `scan_in_progress` while a scan runs or waits; `GET /scan/status` (answers 501 until then, admin only) reports progress, counts and per-file failures, held in memory; queued requests merge. The worker's handle joins `AppState` [BE]
+- [ ] 1 h · A scan counts as done only once its last book is written — `scan_folder` drops the `JoinHandle`s today, so the last file can still be in progress when it reports success; the walk runs in one `spawn_blocking` that returns its report, with no per-file tasks to wait for [BE]
+- [ ] 2 h · Report per-file failures instead of discarding them — only a task panic is logged; `create_book_entry`'s own errors disappear. A failure carries the directory, the path relative to it and an error key; each book runs inside `catch_unwind`, so a panic costs that file only [BE]
 - [ ] 2 h · `create_book_entry` creates a file's series before its cover step and book insert, so a file whose cover step panics (a PDF without PDFium, [36](36-covers.md)) or whose insert fails leaves an empty series behind — extract the cover first, then create the series, link it and insert the book in one transaction, so a failure leaves none of them [BE]
-- [ ] 1 h · An image lying directly in a scanned root makes the root itself one image-comic book named after the folder (`../Downloads` became the book "Downloads", every loose image a page) — only a subfolder of images becomes a book [BE]
-- [ ] 1 h · One missing directory aborts the whole scan, so the directories after it are never scanned — report it and carry on [BE]
-- [ ] 4 h · Incremental scanning: skip files whose stored `file_hash` and `last_modified` are unchanged, and update the row of a file that changed — today a file already in the database is skipped even when its contents changed [BE]
+- [ ] 1 h · An image lying directly in a scanned root makes the root itself one image-comic book named after the folder (`../Downloads` became the book "Downloads", every loose image a page) — only a subfolder of images becomes a book, handled once, not once per image [BE]
+- [ ] 1 h · A missing or unreadable root, or an unreadable subfolder such as `.Trashes`, aborts the whole scan — report it and carry on; a root that can't be read is reported apart from a missing one [BE]
+- [ ] 1 h · Walk with `walkdir`, without following symlinks — `is_dir()` follows them today, so a symlink loop recurses until the scan aborts [BE]
+- [ ] 4 h · Incremental scanning: a `fingerprint` column — a file's size and nanosecond modification time, an image folder's BLAKE3 over its pages' names, sizes and times — skips an unchanged book without opening it; a changed one is hashed, and a new hash renews its row under the same id. A book without a cover is tried again. Migration 0007 adds the column and an index on `file_hash` — today every file is hashed on every scan, and a stored one is never updated [DB] [BE]
+- [ ] 1 h · An image folder's hash covers its pages in page order, its size is their sum and its time the newest page's — today all three come from whichever image `read_dir` lists first [BE]
 - [ ] 1 h · Match file extensions case-insensitively (`.PDF` and `.JPG` are skipped today), and accept `.webp` pages, which the cover code already handles [BE]
-- [ ] 3 h · A database error while looking up a series or library counts as "not found" and creates a duplicate (`get_series_id`, `get_library_id`) — propagate the error, and move these lookups off the legacy `get_id_from_table` onto `search_for_single_row` [BE]
-- [ ] 2 h · Keep a series' original casing for display — names are stored lowercased because the lowercased name is the duplicate check; compare case-insensitively instead (e.g. `COLLATE NOCASE`) [DB] [BE]
-- [ ] 3 h · File-name parsing: accept decimal chapters (`c01.5` parses as chapter 1 today) and `.` / `-` separators (`vol.3` and `v-3` don't match) — [uploads](05-uploads-and-ingestion.md) name files to this same rule set [BE]
+- [ ] 3 h · A database error while looking up a series counts as "not found" and creates a duplicate (`get_series_id`) — the lookup becomes a `Database` method that answers the error, and the legacy `get_id_from_table` goes with `ColumnSelector` once nothing calls it; the library lookup by name disappears with [35](35-scannable-directories.md) [BE]
+- [ ] 2 h · Keep a series' original casing for display — names are stored lowercased because the lowercased name is the duplicate check; match by a `series.match_key`, lowercased in Rust, which a rename keeps. Migration 0005 fills the key and gives existing series their casing back from their books' titles [DB] [BE]
+- [ ] 1 h · A file joins the series of its `match_key` that holds a book of the same directory, else a new series — today a name matches across the whole database [BE]
+- [ ] 3 h · File-name parsing: accept decimal chapters (`c01.5` parses as chapter 1 today) and `.` / `-` separators (`vol.3` and `v-3` don't match) — `chapter_number` becomes a decimal, and the JSON sends a whole chapter as an integer. [Uploads](05-uploads-and-ingestion.md) name files to this same rule set [BE]
 - [ ] 2 h · Strip bracketed tags such as `[Group]` or `(Digital)` from parsed titles, so they don't split one series into several [BE]
-- [ ] 1 h · Use `walkdir` for the directory walk, or drop the unused dependency [BE]
-
-## Open decisions
-- [ ] Is a scan a request or a job? Today the handler awaits the scan inline, yet `GET /scan/status` exists as a placeholder — blocks: running a scan as a job. Suggested: a job — spawn the scan, answer 202, report progress through `/scan/status`; that also makes scanning a single directory natural.
+- [ ] 0.5 h · A folder book's title comes from the folder's whole name — `file_stem` turns "Mr. Robot" into "Mr" [BE]
+- [ ] 1 h · A name that leaves no title ("Chapter 12", "v01.cbz") takes its folder's name — today every such book joins one series named "" [BE]
+- [ ] 0.5 h · The app reads `chapter_number` as `num?` and shows it in the catalog language's number format — its `int?` pattern rejects a whole series' book list at the first `1.5` [FE]

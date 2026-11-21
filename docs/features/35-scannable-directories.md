@@ -4,16 +4,17 @@ State: not started
 
 Which directories get scanned is set by the `BOOK_DIRS` env var today (default
 `../Downloads`), so changing the list means a restart. This moves the list into the
-database, managed through the API from both UIs.
+database, managed through the API from both UIs. A directory added with its "create a library"
+toggle on gets a library of its own; with it off, its series wait in no library until an admin
+adds them to one.
 
 ## Build
-- [ ] 1 h · Scannable-directories table, shaped per the directories decision [DB]
-- [ ] 3 h · Endpoints to add, list and remove scannable directories [BE]
-- [ ] 1 h · Reject a directory that doesn't exist when it is added — today a missing `BOOK_DIRS` entry still gets a library row before its scan fails [BE]
-- [ ] 2 h · Scan one directory: `POST /directories/{id}/scan` (answers 501 until then) [BE]
-- [ ] 2 h · Scan the directories from the table and stop reading `BOOK_DIRS` [BE]
-- [ ] 1 h · A directory gets a required library type when it is added — nothing can infer it from the files, and today every auto-created library is hard-coded to `LibraryType::Books` and named after the lowercased path [BE]
-- [ ] 3 h · Add and remove directories from the frontend [FE]
-
-## Open decisions
-- [ ] Does a directory replace the library or sit beside it? Today they are one-to-one (one auto-created library per `BOOK_DIRS` entry), which curated libraries with hand-picked series break — blocks: the directories table. Suggested: two tables — a directory points at a default library for newly found series, and series can be assigned to further libraries independently.
+- [ ] 1 h · `directories` table: the canonical path (unique), `library_id` → `library` `ON DELETE SET NULL`, `created_at`; `books.directory_id` → `directories` `ON DELETE CASCADE` — migration 0006 [DB]
+- [ ] 3 h · Endpoints to add, list and remove scannable directories: `POST`, `GET` and `DELETE /directories`, admin only; their answers carry the directory's path [BE]
+- [ ] 1 h · Refuse a path that isn't an existing folder (400 `directory_not_found`), one already added (409 `directory_taken`), and one inside or around another directory, the cover folder or the database's folder (409 `directory_overlaps`) — today a missing `BOOK_DIRS` entry still gets a library row before its scan fails [BE]
+- [ ] 1 h · The toggle: with `create_library`, adding a directory creates a library named after the folder, or the given name, with the type the request names — required then; today every auto-created library is hard-coded to `LibraryType::Books` and named after the lowercased path [BE]
+- [ ] 2 h · Adding a directory adopts the stored books without a directory that lie inside it — compared canonical, since `BOOK_DIRS` could be relative — and with the toggle on, their series join its library [BE]
+- [ ] 1 h · Removing a directory deletes its books' rows and the series left without books; the files stay [BE]
+- [ ] 2 h · Scan the directories from the table and stop reading `BOOK_DIRS`; a toggle-on directory's new series join its library [BE]
+- [ ] 2 h · Scan one directory: `POST /directories/{id}/scan` (answers 501 until then), through [34](34-directory-scanning.md)'s scan job; adding a directory queues its first scan [BE]
+- [ ] 3 h · Add and remove directories in the app's Manage screen: the server path, the toggle with the library's name and type, and a confirmation before removing [FE]

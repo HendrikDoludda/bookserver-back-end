@@ -3,14 +3,12 @@
 State: not started
 
 A scan only adds files that aren't in the database yet, so a book whose file was moved or
-deleted keeps its row forever. Reconciliation runs the other way: it walks the `books` rows and
-checks that each file is still there.
+deleted keeps its row forever. Reconciliation, part of every scan, handles the rows the walk no
+longer finds: a moved file keeps its row, a deleted one loses it — unless its whole directory is
+unavailable, so an unplugged drive empties nothing.
 
 ## Build
-- [ ] ? h · Reconciliation pass over the `books` rows, checking that each `file_path` still exists — a separate pass, not a change to `create_book_entry` [BE]
-- [ ] ? h · Find a moved file again by its `file_hash` and update its row, instead of deleting and re-inserting it [BE]
-- [ ] ? h · Handle a file that is gone, per the prune-or-flag decision [DB] [BE]
-- [ ] ? h · Delete the files in `cover_images/` that no book, series or library row names, except the `example-cover.png` fallback — today a cover outlives its book [BE]
-
-## Open decisions
-- [ ] Delete the rows of missing files, or flag them? — blocks: handling a file that is gone. Suggested: flag — an unplugged drive would otherwise empty the catalog.
+- [ ] 2 h · A moved file keeps its row: before a new file is inserted, it takes over a row with its `file_hash` that this scan's walk didn't see, or, outside the scan's scope, whose file is gone [BE]
+- [ ] 2 h · After a scan's inserts and moves, delete the rows in its scope that its walk didn't see, and the series left without books — never for a directory whose root is missing or unreadable or holds no supported file [BE]
+- [ ] 1 h · A full scan deletes the rows that belong to no directory [BE]
+- [ ] 2 h · Delete the files in the cover folder that no book, series or library row names, except the `example-cover.png` fallback, inside the scan job — today a cover outlives its book [BE]
