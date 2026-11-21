@@ -2,23 +2,51 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     db::checked_unix_time,
-    models::{BookMetadata, BookSeriesMetadata, LibraryMetadata, ReadingMode},
+    models::{BookMetadata, BookSeriesMetadata, LibraryMetadata, LibraryType, ReadingMode},
 };
 
-/// One library as the library list sends it: its row, and how many series it holds.
+/// One library as the library list sends it, and how many series it holds — never its stored
+/// cover path: covers are reached through `GET /covers/library/{id}`.
 #[derive(Debug, Serialize)]
 pub struct LibrarySummary {
-    #[serde(flatten)]
-    pub library: LibraryMetadata,
+    pub name: String,
+    pub library_type: LibraryType,
+    pub description: Option<String>,
     pub series_count: i64,
 }
 
-/// One series as a library's series list sends it: its row, and how many books it holds.
+impl LibrarySummary {
+    pub fn new(library: LibraryMetadata, series_count: i64) -> Self {
+        LibrarySummary {
+            name: library.name,
+            library_type: library.library_type,
+            description: library.description,
+            series_count,
+        }
+    }
+}
+
+/// One series as a library's series list sends it, and how many books it holds — never its
+/// stored cover path: covers are reached through `GET /covers/series/{id}`.
 #[derive(Debug, Serialize)]
 pub struct SeriesSummary {
-    #[serde(flatten)]
-    pub series: BookSeriesMetadata,
+    pub name: String,
+    pub description: Option<String>,
+    pub start_release_year: Option<i64>,
+    pub end_release_year: Option<i64>,
     pub book_count: i64,
+}
+
+impl SeriesSummary {
+    pub fn new(series: BookSeriesMetadata, book_count: i64) -> Self {
+        SeriesSummary {
+            name: series.name,
+            description: series.description,
+            start_release_year: series.start_release_year,
+            end_release_year: series.end_release_year,
+            book_count,
+        }
+    }
 }
 
 /// One book as the app gets it — never the server's file path, the file's hash or the cover's

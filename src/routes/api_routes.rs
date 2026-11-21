@@ -252,8 +252,9 @@ mod tests {
             })
             .unwrap();
         let uri = format!("/api/v1/libraries/{library}");
-        let (status, _, _) = call(&app, authorized("DELETE", &uri, &admin, None)).await;
-        assert_eq!(status, StatusCode::OK);
+        let (status, _, body) = call(&app, authorized("DELETE", &uri, &admin, None)).await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        assert!(body.is_empty());
 
         // A GET proves the path exists without starting a scan of the real BOOK_DIRS.
         let (status, _, _) = call(&app, bare("GET", "/api/v1/scan")).await;
@@ -375,8 +376,7 @@ mod tests {
             serde_json::json!([{
                 "id": library,
                 "name": "/books",
-                "library_type": "Books",
-                "cover_image": null,
+                "library_type": "books",
                 "description": null,
                 "series_count": 1,
             }])
@@ -391,12 +391,68 @@ mod tests {
                 "id": series,
                 "name": "the long road",
                 "description": null,
-                "cover_image": null,
                 "start_release_year": null,
                 "end_release_year": null,
                 "book_count": 0,
             }])
         );
+    }
+
+    #[tokio::test]
+    async fn the_library_and_series_lists_never_send_a_stored_cover_path() {
+        let temp = TempDatabase::open();
+        let library = temp
+            .db
+            .setup_new_transaction(|conn| {
+                conn.execute(
+                    "INSERT INTO library (library_name, library_type, cover_image) \
+                     VALUES ('manga', 'comics', '/srv/covers/manga.jpg')",
+                    [],
+                )
+                .unwrap();
+                let library = conn.last_insert_rowid();
+                conn.execute(
+                    "INSERT INTO series (name, cover_image) VALUES ('berserk', '/srv/covers/b.jpg')",
+                    [],
+                )
+                .unwrap();
+                conn.execute(
+                    "INSERT INTO library_elements (library_id, series_id) VALUES (?1, ?2)",
+                    [library, conn.last_insert_rowid()],
+                )
+                .unwrap();
+                Ok(library)
+            })
+            .unwrap();
+        let member = logged_in(&temp, "bob", "member");
+        let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
+
+        for uri in [
+            "/api/v1/libraries".to_string(),
+            format!("/api/v1/libraries/{library}/series"),
+        ] {
+            let (status, _, body) = call(&app, authorized("GET", &uri, &member, None)).await;
+            assert_eq!(status, StatusCode::OK, "{uri}");
+            let row = &json(&body)[0];
+            assert!(row.get("cover_image").is_none(), "{uri}: {row}");
+            assert!(!row.to_string().contains("/srv/covers"), "{uri}: {row}");
+        }
+    }
+
+    #[tokio::test]
+    async fn deleting_a_library_no_one_has_answers_404_json() {
+        let temp = TempDatabase::open();
+        let admin = logged_in(&temp, "alice", "admin");
+        let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
+
+        let (status, _, body) = call(
+            &app,
+            authorized("DELETE", "/api/v1/libraries/999", &admin, None),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(json(&body), serde_json::json!({ "error": "not_found" }));
     }
 
     #[tokio::test]
@@ -2100,7 +2156,7 @@ mod tests {
         assert_eq!(libraries(&temp), 1, "a member deletes nothing");
 
         let (status, _, _) = call(&app, authorized("DELETE", &delete, &admin, None)).await;
-        assert_eq!(status, StatusCode::OK);
+        assert_eq!(status, StatusCode::NO_CONTENT);
         assert_eq!(libraries(&temp), 0);
     }
 

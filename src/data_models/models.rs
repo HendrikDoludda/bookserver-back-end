@@ -73,7 +73,10 @@ impl DatabaseTypes {
 }
 
 // === Library type ============================================================
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// What a library holds; stored as text in `library.library_type`, and sent as `"books"`,
+/// `"comics"`, `"magazines"`, `"documents"` or `"others"`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum LibraryType {
     Books,
     Comics,
@@ -772,4 +775,35 @@ pub struct EmailCode {
     /// Mails sent since `window_started_at`, for the daily cap.
     pub sent_in_window: i64,
     pub window_started_at: SystemTime,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_library_type_travels_in_json_under_the_name_the_database_stores() {
+        for library_type in [
+            LibraryType::Books,
+            LibraryType::Comics,
+            LibraryType::Magazines,
+            LibraryType::Documents,
+            LibraryType::Others,
+        ] {
+            let sent = serde_json::to_value(library_type).unwrap();
+            assert_eq!(sent, serde_json::json!(library_type.as_str()));
+            let read: LibraryType = serde_json::from_value(sent).unwrap();
+            assert_eq!(read, library_type);
+        }
+    }
+
+    #[test]
+    fn a_library_type_by_its_rust_name_or_an_unknown_one_is_refused_in_json() {
+        for name in ["Books", "novels", ""] {
+            assert!(
+                serde_json::from_value::<LibraryType>(serde_json::json!(name)).is_err(),
+                "{name:?}"
+            );
+        }
+    }
 }

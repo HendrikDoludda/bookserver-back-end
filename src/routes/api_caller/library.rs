@@ -47,10 +47,10 @@ pub async fn get_libraries(
                 .into_iter()
                 .map(|library| WithId {
                     id: library.id,
-                    data: LibrarySummary {
-                        series_count: series_counts.get(&library.id).copied().unwrap_or(0),
-                        library: library.data,
-                    },
+                    data: LibrarySummary::new(
+                        library.data,
+                        series_counts.get(&library.id).copied().unwrap_or(0),
+                    ),
                 })
                 .collect::<Vec<_>>())
         })
@@ -79,10 +79,10 @@ pub async fn get_series_in_library(
                 .into_iter()
                 .map(|one| WithId {
                     id: one.id,
-                    data: SeriesSummary {
-                        book_count: book_counts.get(&one.id).copied().unwrap_or(0),
-                        series: one.data,
-                    },
+                    data: SeriesSummary::new(
+                        one.data,
+                        book_counts.get(&one.id).copied().unwrap_or(0),
+                    ),
                 })
                 .collect::<Vec<_>>())
         })
@@ -236,21 +236,25 @@ pub async fn scan_all_directories(
     }
 }
 
-/// Delete a library row by id.
+/// Delete a library row by id; 404 when no library has it.
 pub async fn delete_library(
     _admin: AdminSession,
     State(db): State<Arc<Database>>,
     PathParams(id): PathParams<i64>,
-) -> Result<&'static str, AppErrors> {
-    db.transact(move |conn| {
-        Ok(Database::remove_entry_with_connection(
-            conn,
-            DatabaseTypes::Library,
-            id,
-        )?)
-    })
-    .await?;
-    Ok("Library deleted")
+) -> Result<StatusCode, AppErrors> {
+    let deleted = db
+        .transact(move |conn| {
+            Ok(Database::remove_entry_with_connection(
+                conn,
+                DatabaseTypes::Library,
+                id,
+            )?)
+        })
+        .await?;
+    if deleted == 0 {
+        return Err(DatabaseError::EntryNotFound.into());
+    }
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn read_book(db: Arc<Database>, id: i64) -> Result<BookMetadata, AppErrors> {
