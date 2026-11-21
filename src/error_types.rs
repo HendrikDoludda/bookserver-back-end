@@ -405,12 +405,18 @@ impl ReadingModeError {
 pub enum LibraryError {
     #[error("The name is empty or longer than 200 characters")]
     InvalidName,
+    #[error("A release year is outside 1 to 9999, or the first comes after the last")]
+    InvalidReleaseYears,
+    #[error("The series still has books")]
+    SeriesNotEmpty,
 }
 
 impl LibraryError {
     fn status_and_key(&self) -> (StatusCode, &'static str) {
         match self {
             LibraryError::InvalidName => (StatusCode::BAD_REQUEST, "invalid_name"),
+            LibraryError::InvalidReleaseYears => (StatusCode::BAD_REQUEST, "invalid_release_years"),
+            LibraryError::SeriesNotEmpty => (StatusCode::CONFLICT, "series_not_empty"),
         }
     }
 }
@@ -700,6 +706,16 @@ mod tests {
                 LibraryError::InvalidName.into(),
                 StatusCode::BAD_REQUEST,
                 "invalid_name",
+            ),
+            (
+                LibraryError::InvalidReleaseYears.into(),
+                StatusCode::BAD_REQUEST,
+                "invalid_release_years",
+            ),
+            (
+                LibraryError::SeriesNotEmpty.into(),
+                StatusCode::CONFLICT,
+                "series_not_empty",
             ),
             (
                 DatabaseError::EntryNotFound.into(),

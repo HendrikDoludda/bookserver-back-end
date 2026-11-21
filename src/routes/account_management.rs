@@ -1,17 +1,21 @@
-//! Changes users make to their own account.
+//! A user's own account: reading it, and the changes they make to it.
 
 use std::{sync::Arc, time::SystemTime};
 
 use rusqlite::Connection;
 
 use crate::{
-    data_models::authentication_model::{
-        ChangeEmailRequest, ChangePasswordRequest, ChangeUserNameRequest, ConfirmEmailChangeRequest,
+    data_models::{
+        authentication_model::{
+            ChangeEmailRequest, ChangePasswordRequest, ChangeUserNameRequest,
+            ConfirmEmailChangeRequest,
+        },
+        users_model::UserSummary,
     },
     database_related_scripts::db_email_codes,
     db::Database,
     error_types::{AppErrors, AuthenticationError, DatabaseError},
-    models::{CodePurpose, QuerySeparator, UserDatabaseColumns, UserMetadata},
+    models::{CodePurpose, QuerySeparator, UserDatabaseColumns, UserMetadata, WithId},
     routes::{
         auth::{check_email, check_new_password, check_username, end_other_sessions, hash_secret},
         email_codes::{
@@ -20,10 +24,26 @@ use crate::{
         },
         email_helper::{EmailInformation, Mailer},
         login::check_current_password,
+        user_management,
     },
 };
 
 const CHANGE_EMAIL: CodePurpose = CodePurpose::ChangeEmail;
+
+/// The user's own account, as the admin's user list shows one — never the password hash.
+pub async fn own_account(
+    db: Arc<Database>,
+    user_id: i64,
+) -> Result<WithId<UserSummary>, AppErrors> {
+    let user = db
+        .read(move |conn| {
+            Ok(Database::get_entry_with_connection::<UserMetadata>(
+                conn, user_id,
+            )?)
+        })
+        .await?;
+    Ok(user_management::summary(user))
+}
 
 /// Sets a new password once the current one is re-checked, and ends the user's other sessions
 /// and pending logins; the session that asked stays.

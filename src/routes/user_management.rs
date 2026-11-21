@@ -79,7 +79,7 @@ fn admin_count(conn: &Connection) -> Result<usize, DatabaseError> {
 }
 
 /// The account without its password hash.
-fn summary(user: UserMetadata) -> WithId<UserSummary> {
+pub(crate) fn summary(user: UserMetadata) -> WithId<UserSummary> {
     WithId {
         id: user.user_id,
         data: UserSummary {

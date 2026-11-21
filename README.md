@@ -129,7 +129,7 @@ A bad or incomplete setting stops the server at start, naming it.
 
 Every endpoint except `/health`, `/api/v1/auth/…` and the two `/api/v1/locales…` reads needs
 `Authorization: Bearer <session_token>` and answers 401 without it; scanning, `GET /api/v1/series` and every change to a
-library also need an admin (403 for a member). Implemented endpoints:
+library or a series also need an admin (403 for a member). Implemented endpoints:
 
 | Method | Path | Description |
 | --- | --- | --- |
@@ -141,6 +141,8 @@ library also need an admin (403 for a member). Implemented endpoints:
 | `PUT` | `/api/v1/libraries/{id}/series/{series_id}` | Put a series into a library; `204`, also when it was there already |
 | `DELETE` | `/api/v1/libraries/{id}/series/{series_id}` | Take a series out of a library — the series and its books stay; `204` |
 | `GET` | `/api/v1/series` | Every series by name, with its `book_count` and the `library_ids` it is in |
+| `PATCH` | `/api/v1/series/{id}` | Change a series' `name`, `description`, `start_release_year` or `end_release_year`; a field left out stays, `null` clears it. Years are 1–9999, the first not after the last (`400 invalid_release_years`); answers the series |
+| `DELETE` | `/api/v1/series/{id}` | Delete a series without books, with its library links and reading modes — `204`, or `409 series_not_empty` while it has books |
 | `GET` | `/api/v1/series/{id}/books` | Books in a series |
 | `GET` | `/api/v1/books/{id}` | One book's metadata |
 | `GET` | `/api/v1/books/{id}/file` | Stream the book file (supports `Range`) |
@@ -159,6 +161,7 @@ library also need an admin (403 for a member). Implemented endpoints:
 | `POST` | `/api/v1/auth/logout` | End the session behind either token; always `204` |
 | `POST` | `/api/v1/auth/password_reset` | Mail a password-reset code; always `202`, so it never reveals whether an address has an account |
 | `POST` | `/api/v1/auth/password_reset/confirm` | Set a new password with the emailed code; confirms the email and ends every session |
+| `GET` | `/api/v1/account` | The signed-in user's own account: `id`, `username`, `email`, `email_verified`, `role`, `created_at`, `last_login` |
 | `PUT` | `/api/v1/account/password` | Change the password with the current one; `204`, and every other session ends |
 | `PUT` | `/api/v1/account/username` | Rename the account with `{"new_username"}`; `204`, or `409 username_taken` for a name another account has, in any case |
 | `PUT` | `/api/v1/account/email` | Change the email with `{"new_email", "password"}`: `202` and a code mailed to the new address, or `204` at once when email is off; `409 email_taken` for an address another account has |

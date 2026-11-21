@@ -75,6 +75,19 @@ pub struct LibraryChanges {
     pub description: Option<Option<String>>,
 }
 
+/// `PATCH /api/v1/series/{id}`: a field left out stays as it is, and `null` clears the
+/// description or a release year.
+#[derive(Debug, Deserialize)]
+pub struct SeriesChanges {
+    pub name: Option<String>,
+    #[serde(default, deserialize_with = "present")]
+    pub description: Option<Option<String>>,
+    #[serde(default, deserialize_with = "present")]
+    pub start_release_year: Option<Option<i64>>,
+    #[serde(default, deserialize_with = "present")]
+    pub end_release_year: Option<Option<i64>>,
+}
+
 /// Reads a PATCH field that can be cleared, together with `#[serde(default)]`: left out is
 /// `None`, `null` is `Some(None)`, a value is `Some(Some(value))`.
 // A plain `Option` reads a left-out field and `null` alike, so nothing could be cleared.

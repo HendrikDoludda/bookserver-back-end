@@ -11,17 +11,19 @@ use crate::{
     app_state::AppState,
     error_types::RoutingErrors,
     routes::api_caller::{
-        account::{change_email, change_password, change_username, confirm_email_change},
+        account::{
+            change_email, change_password, change_username, confirm_email_change, get_account,
+        },
         authentication::{
             confirm_password_reset, log_out, refresh_session, request_password_reset,
             resend_verification_code, sign_in, sign_up, verify_email,
         },
         helpers::{method_not_allowed, not_found, not_implemented, ping_server},
         library::{
-            add_library, add_series_to_library, delete_library, get_cover, get_libraries, get_page,
-            get_pages, get_series_children, get_series_in_library, list_series,
-            remove_series_from_library, request_file, retrieve_metadata, scan_all_directories,
-            set_reading_mode, update_library,
+            add_library, add_series_to_library, delete_library, delete_series, get_cover,
+            get_libraries, get_page, get_pages, get_series_children, get_series_in_library,
+            list_series, remove_series_from_library, request_file, retrieve_metadata,
+            scan_all_directories, set_reading_mode, update_library, update_series,
         },
         locales::{get_translations, list_locales},
         settings::{get_settings, replace_settings},
@@ -64,6 +66,7 @@ pub fn set_up_routes() -> Router<AppState> {
             put(add_series_to_library).delete(remove_series_from_library),
         )
         .route("/series", get(list_series))
+        .route("/series/{id}", patch(update_series).delete(delete_series))
         .route("/series/{id}/books", get(get_series_children))
         .route("/series/{id}/reading_mode", put(set_reading_mode))
         .route("/books/{id}", get(retrieve_metadata))
@@ -93,6 +96,7 @@ pub fn set_up_routes() -> Router<AppState> {
         .route("/auth/refresh", post(refresh_session))
         .route("/auth/password_reset", post(request_password_reset))
         .route("/auth/password_reset/confirm", post(confirm_password_reset))
+        .route("/account", get(get_account))
         .route("/account/password", put(change_password))
         .route("/account/username", put(change_username))
         .route("/account/email", put(change_email))
@@ -626,6 +630,12 @@ mod tests {
             ("GET", "/api/v1/series".to_string(), None),
             ("PUT", membership.clone(), None),
             ("DELETE", membership.clone(), None),
+            (
+                "PATCH",
+                format!("/api/v1/series/{berserk}"),
+                Some(serde_json::json!({ "name": "Mine" })),
+            ),
+            ("DELETE", format!("/api/v1/series/{berserk}"), None),
         ] {
             let (status, _, answer) = call(&app, authorized(method, &uri, &member, body)).await;
             assert_eq!(status, StatusCode::FORBIDDEN, "{method} {uri}");
@@ -652,6 +662,151 @@ mod tests {
             .unwrap();
         assert_eq!(names, ["manga"], "a member creates and renames nothing");
         assert_eq!(links, 0, "a member links nothing");
+        let series: Vec<String> = temp
+            .db
+            .setup_new_transaction(|conn| {
+                Ok(conn
+                    .prepare("SELECT name FROM series")
+                    .unwrap()
+                    .query_map([], |row| row.get(0))
+                    .unwrap()
+                    .collect::<Result<_, _>>()
+                    .unwrap())
+            })
+            .unwrap();
+        assert_eq!(
+            series,
+            ["berserk"],
+            "a member renames and deletes no series"
+        );
+    }
+
+    /// A book of `series` with plain SQL, as the scanner writes one.
+    fn scanned_book(temp: &TempDatabase, series: i64, file_path: &str) {
+        temp.db
+            .setup_new_transaction(|conn| {
+                conn.execute(
+                    "INSERT INTO books (title, author, format, language, tags, file_path, series) \
+                     VALUES ('Berserk', 'Unknown Author', 'cbz', 'Unknown', '', ?1, ?2)",
+                    rusqlite::params![file_path, series],
+                )
+                .unwrap();
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn an_admin_edits_a_series_and_deletes_it_only_once_it_has_no_books() {
+        let temp = TempDatabase::open();
+        let admin = logged_in(&temp, "alice", "admin");
+        let berserk = scanned_series(&temp, "berserk");
+        let monster = scanned_series(&temp, "monster");
+        scanned_book(&temp, berserk, "/books/Berserk v01.cbz");
+        let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
+        let berserk_uri = format!("/api/v1/series/{berserk}");
+        let monster_uri = format!("/api/v1/series/{monster}");
+
+        let body = serde_json::json!({ "name": "Berserk", "start_release_year": 1989 });
+        let (status, _, changed) =
+            call(&app, authorized("PATCH", &berserk_uri, &admin, Some(body))).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            json(&changed),
+            serde_json::json!({
+                "id": berserk,
+                "name": "Berserk",
+                "description": null,
+                "start_release_year": 1989,
+                "end_release_year": null,
+                "book_count": 1,
+            })
+        );
+
+        let body = serde_json::json!({ "end_release_year": 1980 });
+        let (status, _, answer) =
+            call(&app, authorized("PATCH", &berserk_uri, &admin, Some(body))).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(
+            json(&answer),
+            serde_json::json!({ "error": "invalid_release_years" })
+        );
+
+        let (status, _, answer) =
+            call(&app, authorized("DELETE", &berserk_uri, &admin, None)).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(
+            json(&answer),
+            serde_json::json!({ "error": "series_not_empty" })
+        );
+
+        let (status, _, answer) =
+            call(&app, authorized("DELETE", &monster_uri, &admin, None)).await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        assert!(answer.is_empty());
+        let (status, _, answer) =
+            call(&app, authorized("DELETE", &monster_uri, &admin, None)).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(json(&answer), serde_json::json!({ "error": "not_found" }));
+    }
+
+    #[tokio::test]
+    async fn deleting_a_library_only_unlinks_its_series_and_keeps_their_books() {
+        let temp = TempDatabase::open();
+        let admin = logged_in(&temp, "alice", "admin");
+        let berserk = scanned_series(&temp, "berserk");
+        scanned_book(&temp, berserk, "/books/Berserk v01.cbz");
+        let library = temp
+            .db
+            .setup_new_transaction(|conn| {
+                conn.execute(
+                    "INSERT INTO library (library_name, library_type) VALUES ('manga', 'comics')",
+                    [],
+                )
+                .unwrap();
+                let library = conn.last_insert_rowid();
+                conn.execute(
+                    "INSERT INTO library_elements (library_id, series_id) VALUES (?1, ?2)",
+                    [library, berserk],
+                )
+                .unwrap();
+                Ok(library)
+            })
+            .unwrap();
+        let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
+
+        let uri = format!("/api/v1/libraries/{library}");
+        let (status, _, _) = call(&app, authorized("DELETE", &uri, &admin, None)).await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+
+        let (_, _, listed) = call(&app, authorized("GET", "/api/v1/series", &admin, None)).await;
+        assert_eq!(json(&listed)[0]["id"], berserk);
+        assert_eq!(json(&listed)[0]["book_count"], 1, "its book stays");
+        assert_eq!(json(&listed)[0]["library_ids"], serde_json::json!([]));
+    }
+
+    #[tokio::test]
+    async fn every_user_reads_their_own_account_with_their_role() {
+        let temp = TempDatabase::open();
+        let member = logged_in(&temp, "bob", "member");
+        let admin = logged_in(&temp, "alice", "admin");
+        let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
+
+        for (token, username, role) in [(&member, "bob", "member"), (&admin, "alice", "admin")] {
+            let (status, _, body) =
+                call(&app, authorized("GET", "/api/v1/account", token, None)).await;
+            assert_eq!(status, StatusCode::OK, "{username}");
+            let account = json(&body);
+            assert_eq!(account["username"], username);
+            assert_eq!(account["email"], format!("{username}@example.com"));
+            assert_eq!(account["role"], role);
+            assert!(account["id"].is_i64());
+            assert!(account.get("password_hash").is_none(), "{account}");
+            assert!(
+                !String::from_utf8_lossy(&body).contains("not-a-hash"),
+                "the stored hash never goes out"
+            );
+        }
     }
 
     #[tokio::test]
@@ -2078,6 +2233,8 @@ mod tests {
         ("PUT", "/api/v1/libraries/1/series/1"),
         ("DELETE", "/api/v1/libraries/1/series/1"),
         ("GET", "/api/v1/series"),
+        ("PATCH", "/api/v1/series/1"),
+        ("DELETE", "/api/v1/series/1"),
         ("GET", "/api/v1/series/1/books"),
         ("PUT", "/api/v1/series/1/reading_mode"),
         ("GET", "/api/v1/books/1"),
@@ -2092,6 +2249,7 @@ mod tests {
         ("POST", "/api/v1/directories/1/scan"),
         ("POST", "/api/v1/metadata/scan"),
         ("GET", "/api/v1/search"),
+        ("GET", "/api/v1/account"),
         ("PUT", "/api/v1/account/password"),
         ("PUT", "/api/v1/account/username"),
         ("PUT", "/api/v1/account/email"),

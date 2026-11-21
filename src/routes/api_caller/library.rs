@@ -17,7 +17,7 @@ use crate::{
     book_pages::{self, PageContent},
     data_models::books_model::{
         BookDetails, BookSummary, LibraryChanges, LibrarySummary, NewLibrary, PageSummary,
-        ReadingModeChange, ReadingModeSetting, SeriesListing, SeriesSummary,
+        ReadingModeChange, ReadingModeSetting, SeriesChanges, SeriesListing, SeriesSummary,
     },
     db::Database,
     error_types::{internal_error_response, AppErrors, DatabaseError, PageError},
@@ -286,6 +286,29 @@ pub async fn remove_series_from_library(
     PathParams((library_id, series_id)): PathParams<(i64, i64)>,
 ) -> Result<StatusCode, AppErrors> {
     library_management::remove_series(db, library_id, series_id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// `PATCH /api/v1/series/{id}` with `{"name"?, "description"?, "start_release_year"?,
+/// "end_release_year"?}`: answers the changed series.
+pub async fn update_series(
+    _admin: AdminSession,
+    State(db): State<Arc<Database>>,
+    PathParams(id): PathParams<i64>,
+    JsonBody(changes): JsonBody<SeriesChanges>,
+) -> Result<Json<WithId<SeriesSummary>>, AppErrors> {
+    Ok(Json(
+        library_management::change_series(db, id, changes).await?,
+    ))
+}
+
+/// `DELETE /api/v1/series/{id}`: only a series without books; 409 `series_not_empty` otherwise.
+pub async fn delete_series(
+    _admin: AdminSession,
+    State(db): State<Arc<Database>>,
+    PathParams(id): PathParams<i64>,
+) -> Result<StatusCode, AppErrors> {
+    library_management::delete_series(db, id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

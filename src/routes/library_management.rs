@@ -1,23 +1,27 @@
-//! What an admin changes about libraries: creating and editing them, and which series they hold.
+//! What an admin changes about libraries and series: creating and editing libraries, which series
+//! they hold, and editing and deleting series.
 
-use std::sync::Arc;
+use std::{ops::RangeInclusive, sync::Arc};
 
 use rusqlite::{Connection, ToSql};
 
 use crate::{
     data_models::books_model::{
-        LibraryChanges, LibrarySummary, NewLibrary, SeriesListing, SeriesSummary,
+        LibraryChanges, LibrarySummary, NewLibrary, SeriesChanges, SeriesListing, SeriesSummary,
     },
     db::Database,
     error_types::{AppErrors, DatabaseError, LibraryError},
     models::{
-        BookSeriesMetadata, LibraryDatabaseColumns, LibraryMetadata, SeriesLibraryConnection,
-        WithId,
+        BookSeriesMetadata, DatabaseTypes, LibraryDatabaseColumns, LibraryMetadata,
+        SeriesDatabaseColumns, SeriesLibraryConnection, WithId,
     },
 };
 
 /// Room for any real title, while a pasted page of text is still refused.
 const MAX_NAME_CHARS: usize = 200;
+
+/// Four-digit years: no release lies outside them, and a typo such as 20255 is caught.
+const RELEASE_YEARS: RangeInclusive<i64> = 1..=9999;
 
 /// A library's or series' name as it is stored: trimmed, and 1 to 200 characters long.
 pub fn checked_name(name: &str) -> Result<String, LibraryError> {
@@ -155,11 +159,98 @@ pub async fn remove_series(
     .await
 }
 
+/// Applies an admin's changes to a series and answers it as a library's series list sends it. A
+/// body that changes nothing is refused.
+pub async fn change_series(
+    db: Arc<Database>,
+    series_id: i64,
+    changes: SeriesChanges,
+) -> Result<WithId<SeriesSummary>, AppErrors> {
+    let SeriesChanges {
+        name,
+        description,
+        start_release_year,
+        end_release_year,
+    } = changes;
+    if name.is_none()
+        && description.is_none()
+        && start_release_year.is_none()
+        && end_release_year.is_none()
+    {
+        return Err(AppErrors::InvalidRequest);
+    }
+    let name = name.as_deref().map(checked_name).transpose()?;
+    let mut years_sent = [start_release_year, end_release_year]
+        .into_iter()
+        .flatten()
+        .flatten();
+    if years_sent.any(|year| !RELEASE_YEARS.contains(&year)) {
+        return Err(LibraryError::InvalidReleaseYears.into());
+    }
+
+    db.transact(move |conn| {
+        let stored = Database::get_entry_with_connection::<BookSeriesMetadata>(conn, series_id)?;
+        // A year sent alone is compared with the other one as it is stored.
+        let start = start_release_year.unwrap_or(stored.start_release_year);
+        let end = end_release_year.unwrap_or(stored.end_release_year);
+        if matches!((start, end), (Some(start), Some(end)) if start > end) {
+            return Err(LibraryError::InvalidReleaseYears.into());
+        }
+        let mut columns = Vec::new();
+        let mut values: Vec<&dyn ToSql> = Vec::new();
+        if let Some(name) = &name {
+            columns.push(SeriesDatabaseColumns::Name);
+            values.push(name);
+        }
+        if let Some(description) = &description {
+            columns.push(SeriesDatabaseColumns::Description);
+            values.push(description);
+        }
+        if let Some(year) = &start_release_year {
+            columns.push(SeriesDatabaseColumns::StartReleaseYear);
+            values.push(year);
+        }
+        if let Some(year) = &end_release_year {
+            columns.push(SeriesDatabaseColumns::EndReleaseYear);
+            values.push(year);
+        }
+        Database::update_multiple_values_with_connection::<BookSeriesMetadata>(
+            conn, &columns, &values, series_id,
+        )?;
+        series_summary(conn, series_id)
+    })
+    .await
+}
+
+/// Deletes a series that holds no books, together with its library links and reading modes; a
+/// series with books is refused.
+pub async fn delete_series(db: Arc<Database>, series_id: i64) -> Result<(), AppErrors> {
+    db.transact(move |conn| {
+        Database::get_entry_with_connection::<BookSeriesMetadata>(conn, series_id)?;
+        if !Database::get_books_in_series_with_connection(conn, series_id)?.is_empty() {
+            return Err(LibraryError::SeriesNotEmpty.into());
+        }
+        Database::remove_entry_with_connection(conn, DatabaseTypes::Series, series_id)?;
+        Ok(())
+    })
+    .await
+}
+
 /// `DatabaseError::EntryNotFound` unless both the library and the series exist.
 fn existing(conn: &Connection, library_id: i64, series_id: i64) -> Result<(), DatabaseError> {
     Database::get_entry_with_connection::<LibraryMetadata>(conn, library_id)?;
     Database::get_entry_with_connection::<BookSeriesMetadata>(conn, series_id)?;
     Ok(())
+}
+
+/// The series as a library's series list sends it.
+fn series_summary(conn: &Connection, series_id: i64) -> Result<WithId<SeriesSummary>, AppErrors> {
+    let series = Database::get_entry_with_connection::<BookSeriesMetadata>(conn, series_id)?;
+    let book_count = Database::get_books_in_series_with_connection(conn, series_id)?.len() as i64;
+    Ok(WithId {
+        id: series_id,
+        data: SeriesSummary::new(series, book_count),
+    })
 }
 
 /// The library as the library list sends it.
@@ -377,6 +468,198 @@ mod tests {
                 );
             }
         }
+    }
+
+    fn add_book_row(temp: &TempDatabase, series_id: i64, file_path: &str) {
+        temp.db
+            .setup_new_transaction(|conn| {
+                conn.execute(
+                    "INSERT INTO books (title, author, format, language, tags, file_path, series) \
+                     VALUES ('Berserk', 'Kentaro Miura', 'cbz', 'ja', '', ?1, ?2)",
+                    rusqlite::params![file_path, series_id],
+                )
+                .unwrap();
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    fn series_changes(
+        name: Option<&str>,
+        description: Option<Option<&str>>,
+        start_release_year: Option<Option<i64>>,
+        end_release_year: Option<Option<i64>>,
+    ) -> SeriesChanges {
+        SeriesChanges {
+            name: name.map(String::from),
+            description: description.map(|text| text.map(String::from)),
+            start_release_year,
+            end_release_year,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_series_change_touches_only_its_fields_and_null_clears_them() {
+        let temp = TempDatabase::open();
+        let berserk = add_series_row(&temp, "berserk");
+        add_book_row(&temp, berserk, "/books/Berserk v01.cbz");
+        let change = |changes| change_series(temp.db.clone(), berserk, changes);
+
+        let renamed = change(series_changes(Some(" Berserk "), None, None, None))
+            .await
+            .unwrap();
+        assert_eq!(renamed.id, berserk);
+        assert_eq!(renamed.data.name, "Berserk");
+        assert_eq!(renamed.data.book_count, 1);
+
+        let described = change(series_changes(
+            None,
+            Some(Some("Dark fantasy")),
+            Some(Some(1989)),
+            Some(Some(2021)),
+        ))
+        .await
+        .unwrap();
+        assert_eq!(described.data.name, "Berserk");
+        assert_eq!(described.data.description.as_deref(), Some("Dark fantasy"));
+        assert_eq!(described.data.start_release_year, Some(1989));
+        assert_eq!(described.data.end_release_year, Some(2021));
+
+        let cleared = change(series_changes(None, Some(None), Some(None), None))
+            .await
+            .unwrap();
+        assert_eq!(cleared.data.description, None);
+        assert_eq!(cleared.data.start_release_year, None);
+        assert_eq!(
+            cleared.data.end_release_year,
+            Some(2021),
+            "left out, so kept"
+        );
+    }
+
+    #[tokio::test]
+    async fn release_years_outside_1_to_9999_or_out_of_order_are_refused() {
+        let temp = TempDatabase::open();
+        let berserk = add_series_row(&temp, "berserk");
+        let change = |start, end| {
+            change_series(
+                temp.db.clone(),
+                berserk,
+                series_changes(None, None, start, end),
+            )
+        };
+        change(Some(Some(1989)), Some(Some(2021))).await.unwrap();
+
+        for (start, end) in [
+            (Some(Some(0)), None),
+            (Some(Some(-5)), None),
+            (None, Some(Some(10_000))),
+            (Some(Some(2000)), Some(Some(1999))),
+            // A year sent alone is compared with the other one as it is stored.
+            (Some(Some(2022)), None),
+            (None, Some(Some(1988))),
+        ] {
+            let result = change(start, end).await;
+            assert!(
+                matches!(
+                    result,
+                    Err(AppErrors::Library(LibraryError::InvalidReleaseYears))
+                ),
+                "{start:?} {end:?}"
+            );
+        }
+        let stored = temp.db.get_entry::<BookSeriesMetadata>(berserk).unwrap();
+        assert_eq!(
+            (stored.start_release_year, stored.end_release_year),
+            (Some(1989), Some(2021)),
+            "a refused change changes nothing"
+        );
+
+        let same_year = change(Some(Some(1)), Some(Some(1))).await.unwrap();
+        assert_eq!(same_year.data.start_release_year, Some(1));
+        let last_year = change(None, Some(Some(9999))).await.unwrap();
+        assert_eq!(last_year.data.end_release_year, Some(9999));
+    }
+
+    #[tokio::test]
+    async fn a_series_change_without_fields_a_bad_name_or_an_unknown_series_is_refused() {
+        let temp = TempDatabase::open();
+        let berserk = add_series_row(&temp, "berserk");
+        let change = |series_id, changes| change_series(temp.db.clone(), series_id, changes);
+
+        let empty = change(berserk, series_changes(None, None, None, None)).await;
+        assert!(matches!(empty, Err(AppErrors::InvalidRequest)));
+
+        let blank = change(berserk, series_changes(Some("  "), None, None, None)).await;
+        assert!(matches!(
+            blank,
+            Err(AppErrors::Library(LibraryError::InvalidName))
+        ));
+
+        let unknown = change(
+            berserk + 1,
+            series_changes(Some("Monster"), None, None, None),
+        )
+        .await;
+        assert!(matches!(
+            unknown,
+            Err(AppErrors::Database(DatabaseError::EntryNotFound))
+        ));
+    }
+
+    #[tokio::test]
+    async fn only_a_series_without_books_is_deleted_with_its_links_and_reading_modes() {
+        let temp = TempDatabase::open();
+        let library = create_library(temp.db.clone(), new_library("Favourites"))
+            .await
+            .unwrap()
+            .id;
+        let berserk = add_series_row(&temp, "berserk");
+        let monster = add_series_row(&temp, "monster");
+        add_book_row(&temp, berserk, "/books/Berserk v01.cbz");
+        for series_id in [berserk, monster] {
+            add_series(temp.db.clone(), library, series_id)
+                .await
+                .unwrap();
+        }
+        temp.db
+            .setup_new_transaction(|conn| {
+                let alice = crate::test_support::insert_user(conn, "alice");
+                conn.execute(
+                    "INSERT INTO reading_modes (user_id, series_id, mode) VALUES (?1, ?2, 'rtl')",
+                    [alice, monster],
+                )
+                .unwrap();
+                Ok(())
+            })
+            .unwrap();
+
+        let refused = delete_series(temp.db.clone(), berserk).await;
+        assert!(matches!(
+            refused,
+            Err(AppErrors::Library(LibraryError::SeriesNotEmpty))
+        ));
+        assert!(temp.db.get_entry::<BookSeriesMetadata>(berserk).is_ok());
+        assert_eq!(linked_libraries(&temp, berserk), [library]);
+
+        delete_series(temp.db.clone(), monster).await.unwrap();
+        assert!(temp.db.get_entry::<BookSeriesMetadata>(monster).is_err());
+        assert_eq!(linked_libraries(&temp, monster), Vec::<i64>::new());
+        let modes: i64 = temp
+            .db
+            .setup_new_transaction(|conn| {
+                Ok(conn
+                    .query_row("SELECT COUNT(*) FROM reading_modes", [], |row| row.get(0))
+                    .unwrap())
+            })
+            .unwrap();
+        assert_eq!(modes, 0, "the deleted series' reading mode goes with it");
+
+        let again = delete_series(temp.db.clone(), monster).await;
+        assert!(matches!(
+            again,
+            Err(AppErrors::Database(DatabaseError::EntryNotFound))
+        ));
     }
 
     #[tokio::test]

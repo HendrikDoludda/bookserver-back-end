@@ -1,15 +1,20 @@
-//! The account handlers: changes users make to their own account.
+//! The account handlers: a user's own account, and the changes they make to it.
 
 use std::{sync::Arc, time::SystemTime};
 
-use axum::{extract::State, http::StatusCode};
+use axum::{extract::State, http::StatusCode, Json};
 
 use crate::{
-    data_models::authentication_model::{
-        ChangeEmailRequest, ChangePasswordRequest, ChangeUserNameRequest, ConfirmEmailChangeRequest,
+    data_models::{
+        authentication_model::{
+            ChangeEmailRequest, ChangePasswordRequest, ChangeUserNameRequest,
+            ConfirmEmailChangeRequest,
+        },
+        users_model::UserSummary,
     },
     db::Database,
     error_types::AppErrors,
+    models::WithId,
     routes::{
         account_management::{self, EmailChangeRequested},
         email_helper::Mailer,
@@ -17,6 +22,16 @@ use crate::{
 };
 
 use super::extractors::{AuthSession, JsonBody};
+
+/// `GET /api/v1/account`: the signed-in user's own account, with their role.
+pub async fn get_account(
+    AuthSession(session): AuthSession,
+    State(db): State<Arc<Database>>,
+) -> Result<Json<WithId<UserSummary>>, AppErrors> {
+    Ok(Json(
+        account_management::own_account(db, session.user_id).await?,
+    ))
+}
 
 /// `PUT /api/v1/account/password`: ends the user's other sessions; this one stays.
 pub async fn change_password(
