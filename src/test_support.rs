@@ -257,6 +257,53 @@ impl TempDir {
         archive.finish().expect("finish the archive");
         path
     }
+
+    /// Writes an EPUB to `relative` whose `container.xml` names the package document at `package`,
+    /// holding `document`; `files` follow. Answers the book's path.
+    pub fn write_epub(
+        &self,
+        relative: &str,
+        package: &str,
+        document: &str,
+        files: &[(&str, &[u8])],
+    ) -> PathBuf {
+        let container = format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="{package}" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>"#
+        );
+        let mut entries = vec![
+            ("mimetype", b"application/epub+zip".as_slice()),
+            ("META-INF/container.xml", container.as_bytes()),
+            (package, document.as_bytes()),
+        ];
+        entries.extend_from_slice(files);
+        self.write_cbz(relative, &entries)
+    }
+}
+
+/// An EPUB's package document listing `metadata` and `manifest`, besides one chapter.
+pub fn package_document(metadata: &str, manifest: &str) -> String {
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" xmlns:opf="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="id">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:identifier id="id">urn:uuid:4f3c2b1a</dc:identifier>
+    <dc:title>Dune</dc:title>
+    {metadata}
+  </metadata>
+  <manifest>
+    <item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/>
+    {manifest}
+  </manifest>
+  <spine>
+    <itemref idref="chapter"/>
+  </spine>
+</package>"#
+    )
 }
 
 impl Drop for TempDir {

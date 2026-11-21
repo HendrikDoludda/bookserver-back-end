@@ -442,6 +442,25 @@ mod tests {
     }
 
     #[test]
+    fn an_epub_whose_cover_cant_be_read_is_catalogued_without_one() {
+        let dir = TempDir::new();
+        let covers = covers_in(&dir);
+        let temp = TempDatabase::open();
+        let library_id = create_library_entry("books".to_string(), &temp.db).unwrap();
+        let epub = dir.write_cbz(
+            "Dune v01.epub",
+            &[(
+                "META-INF/container.xml",
+                b"<container><rootfiles></container>",
+            )],
+        );
+
+        create_book_entry(&epub, &temp.db, library_id, &covers).unwrap();
+
+        assert_eq!(stored_cover(&temp.db, &epub), None);
+    }
+
+    #[test]
     fn a_scanned_cbz_stores_its_cover_by_name_from_the_given_folder() {
         let dir = TempDir::new();
         let covers = covers_in(&dir);

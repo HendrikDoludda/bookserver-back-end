@@ -3,7 +3,8 @@
 State: in progress
 
 The scanner extracts one cover per book into the cover folder as `<file hash>.<ext>` — the first
-page of a PDF, the first image of a CBZ or image folder, an image from an EPUB.
+page of a PDF, the first image of a CBZ or image folder, the image an EPUB's package document
+names.
 `GET /covers/{kind}/{id}` serves a book's cover, and a series' or library's: its own — which
 nothing sets yet — else its first book's.
 
@@ -14,7 +15,7 @@ nothing sets yet — else its first book's.
 - [ ] 3 h · An admin chooses a series' cover from its books' covers and a library's from its series': `PUT` and `DELETE /series/{id}/cover` and `/libraries/{id}/cover`, where `DELETE` goes back to the automatic cover — the columns exist, but nothing sets them [BE]
 - [x] 0.5 h · The series and library JSON stop sending `cover_image`, a server file path — the app gets covers from `GET /covers/{kind}/{id}` [BE]
 - [ ] 3 h · Choose a series' or a library's cover in the app's Manage screen, and drop the app's cached covers after a change [FE]
-- [ ] 3 h · EPUB: take the cover the package document names — EPUB 3's `cover-image` item, else EPUB 2's `<meta name="cover">`, else an image whose id says cover — instead of `epub.images.first()`, reading only that entry with `zip` and `quick-xml`; the extension comes from a known media type (`image/svg+xml` becomes `.svg+xml` today), and any other gets no cover. `epub-parser`, used only here, goes [BE]
+- [x] 3 h · EPUB: take the cover the package document names — EPUB 3's `cover-image` item, else EPUB 2's `<meta name="cover">`, else an image whose id says cover — instead of `epub.images.first()`, reading only that entry with `zip` and `quick-xml`; the extension comes from a known media type (`image/svg+xml` becomes `.svg+xml` today), and any other gets no cover. `epub-parser`, used only here, goes [BE]
 - [x] 1 h · When hashing a file fails, its cover is written to `./cover_images.jpg` — one file beside the cover folder, shared by every such book — because the empty hash is joined to the folder path and `with_extension` renames the folder. Skip the cover when there is no hash [BE]
 - [x] 1 h · Check for an existing cover before extracting: CBZ never checks, and PDF renders the page before it checks [BE]
 - [x] 1 h · The cover folder is a value in `AppState` that the scanner and the cover route take, `./cover_images/` by default, instead of a constant in the working directory, so a test of the scanner doesn't write covers where it was started; rows store the bare file name, and migration 0004 strips the prefix from existing rows. Where the folder lives is [52](52-packaging-and-deployment.md)'s [DB] [BE]

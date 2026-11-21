@@ -16,8 +16,8 @@ an HTTP API for a reader frontend.
   blocking thread pool (with a semaphore limiting concurrency), and parses volume / chapter /
   page numbers out of filenames.
 - **Cover extraction per format.** PDF (rendered with PDFium), CBZ (first image in the
-  archive), EPUB, and plain folders of images. Each cover is named by the file's BLAKE3
-  content hash.
+  archive), EPUB (the image its package document names), and plain folders of images. Each
+  cover is named by the file's BLAKE3 content hash.
 - **File streaming with HTTP range requests**, so a reader can seek inside large files
   without downloading them whole.
 - **SQLite behind a connection pool**, with versioned, transactional migrations embedded in

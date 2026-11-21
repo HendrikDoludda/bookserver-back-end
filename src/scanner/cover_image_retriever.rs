@@ -1,4 +1,3 @@
-use epub_parser::Epub;
 use image::ImageFormat;
 use pdfium_render::prelude::*;
 use std::fs::{self, File};
@@ -6,7 +5,10 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::{book_pages, data_models::models::BookFormat, error_types::CoverImageError};
+use crate::{
+    book_pages, data_models::models::BookFormat, error_types::CoverImageError,
+    scanner::epub_package,
+};
 
 const DEFAULT_IMAGE: &str = "example-cover.png";
 
@@ -80,7 +82,7 @@ fn extract(
             None => Ok(None),
         },
         BookFormat::Cbz => cbz_cover(&covers.folder, path, hash).map(Some),
-        BookFormat::Epub => epub_cover(&covers.folder, path, hash).map(Some),
+        BookFormat::Epub => epub_cover(&covers.folder, path, hash),
         BookFormat::ImageComic => folder_cover(&covers.folder, path, hash).map(Some),
         BookFormat::None => Ok(Some(DEFAULT_IMAGE.to_string())),
     }
@@ -137,21 +139,13 @@ fn pdf_cover(
     Ok(name)
 }
 
-fn epub_cover(folder: &Path, path: &Path, hash: &str) -> Result<String, CoverImageError> {
-    let epub = Epub::parse(path).map_err(|_| CoverImageError::FileNotFound)?;
-    let cover = epub
-        .images
-        .first()
-        .ok_or(CoverImageError::CoverCreationFailed)?;
-
-    // Extract extension from media type
-    let extension = cover
-        .media_type
-        .split('/')
-        .nth(1)
-        .ok_or(CoverImageError::CoverCreationFailed)?;
-
-    write_cover(folder, hash, extension, &cover.content)
+/// The cover of an EPUB: the image its package document names. `None` when it names none the app
+/// can draw.
+fn epub_cover(folder: &Path, path: &Path, hash: &str) -> Result<Option<String>, CoverImageError> {
+    let Some((image, extension)) = epub_package::cover_image(path)? else {
+        return Ok(None);
+    };
+    write_cover(folder, hash, extension, &image).map(Some)
 }
 
 /// The cover of an image folder: its page 1, once its first bytes show it is a picture.
@@ -194,7 +188,7 @@ fn create_folder(folder: &Path) -> Result<(), CoverImageError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{encoded_image, TempDir};
+    use crate::test_support::{encoded_image, package_document, TempDir};
 
     const HASH: &str = "0123abcd";
 
@@ -283,6 +277,53 @@ mod tests {
         }
         assert!(!covers.folder.exists());
         assert!(!books.path().join("covers.png").exists());
+    }
+
+    #[test]
+    fn an_epub_cover_is_the_image_its_package_names_stored_under_the_hash() {
+        let books = TempDir::new();
+        let covers = covers_in(&books);
+        let epub = books.write_epub(
+            "Dune.epub",
+            "OEBPS/content.opf",
+            &package_document(
+                "",
+                r#"<item id="front" href="images/front.jpg" media-type="image/jpeg" properties="cover-image"/>"#,
+            ),
+            &[("OEBPS/images/front.jpg", b"the cover")],
+        );
+
+        let name = cover_for(&covers, &epub, &BookFormat::Epub, Some(HASH));
+
+        assert_eq!(name.as_deref(), Some("0123abcd.jpg"));
+        assert_eq!(
+            fs::read(covers.path_of("0123abcd.jpg")).unwrap(),
+            b"the cover"
+        );
+    }
+
+    #[test]
+    fn an_epub_without_a_cover_the_app_can_draw_gets_none_and_nothing_is_written() {
+        let books = TempDir::new();
+        let covers = covers_in(&books);
+        let svg = books.write_epub(
+            "Dune.epub",
+            "OEBPS/content.opf",
+            &package_document(
+                "",
+                r#"<item id="front" href="front.svg" media-type="image/svg+xml" properties="cover-image"/>"#,
+            ),
+            &[("OEBPS/front.svg", b"<svg/>")],
+        );
+        let no_image = books.write_epub("Emma.epub", "content.opf", &package_document("", ""), &[]);
+
+        for epub in [svg, no_image] {
+            assert_eq!(
+                cover_for(&covers, &epub, &BookFormat::Epub, Some(HASH)),
+                None
+            );
+        }
+        assert!(!covers.folder.exists(), "nothing is written");
     }
 
     #[test]

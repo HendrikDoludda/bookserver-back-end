@@ -41,8 +41,6 @@ fn stated(format: &BookFormat, path: &Path) -> Result<Option<ReadingDirection>, 
         return Ok(None);
     };
     let text = std::str::from_utf8(&bytes)?;
-    // A byte-order mark, which the XML reader would take for text before the root element.
-    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     Ok(direction_in(text)?)
 }
 

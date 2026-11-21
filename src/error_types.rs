@@ -177,6 +177,18 @@ pub enum CoverImageError {
     #[error("System failed to create a document from pdf")]
     PdfToDocumentError,
 
+    #[error("the EPUB's container.xml names no package document")]
+    EpubWithoutPackage,
+
+    #[error("the EPUB's cover href {0:?} names no file inside the book")]
+    EpubCoverHref(String),
+
+    #[error("an XML file of the EPUB isn't UTF-8: {0}")]
+    EpubNotUtf8(#[from] std::str::Utf8Error),
+
+    #[error("an XML file of the EPUB can't be read: {0}")]
+    EpubXml(#[from] quick_xml::Error),
+
     #[error(transparent)]
     Pages(#[from] PageError),
 }
