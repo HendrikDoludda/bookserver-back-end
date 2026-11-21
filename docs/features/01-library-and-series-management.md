@@ -11,7 +11,7 @@ its series and books stay.
 - [x] 0.5 h · Send `library_type` in snake_case (`books`), like every other enum — the library JSON sends the Rust variant name `"Books"` today [BE]
 - [x] 0.5 h · `DELETE /libraries/{id}` answers 200 "Library deleted" for an id no library has — `remove_entry` returns the deleted-row count; answer 404 `not_found` when it is 0, and 204 instead of the text otherwise [BE]
 - [x] 0.5 h · Delete the unused `GetLibraryRequest` [BE]
-- [ ] 2.5 h · Declare `books.series` a foreign key to `series(id)`, `ON DELETE RESTRICT`, with an index: migration 0003 rebuilds `books` — create, copy the rows with their ids and `sqlite_sequence`'s counter, drop, rename — since SQLite can't add one to an existing column; a `series` naming no series becomes NULL, and `chapter_number` is declared `NUMERIC` for [34](34-directory-scanning.md)'s decimal chapters [DB]
+- [x] 2.5 h · Declare `books.series` a foreign key to `series(id)`, `ON DELETE RESTRICT`, with an index: migration 0003 rebuilds `books` — create, copy the rows with their ids and `sqlite_sequence`'s counter, drop, rename — since SQLite can't add one to an existing column; a `series` naming no series becomes NULL, and `chapter_number` is declared `NUMERIC` for [34](34-directory-scanning.md)'s decimal chapters [DB]
 - [ ] 3 h · Create a library with its name, type and description: `POST /libraries`, which answers 501 until then [BE]
 - [ ] 2 h · Edit a library's name, type and description: `PATCH /libraries/{id}`, which answers 501 until then; a field sent as `null` is cleared, an absent one kept [BE]
 - [ ] 1 h · List every series with its book count and the libraries it is in — `GET /series` — to choose a library's series from [BE]

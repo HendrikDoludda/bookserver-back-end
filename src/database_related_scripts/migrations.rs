@@ -25,6 +25,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "reading_modes",
         sql: include_str!("../../migrations/0002_reading_modes.sql"),
     },
+    Migration {
+        version: 3,
+        name: "books_series_foreign_key",
+        sql: include_str!("../../migrations/0003_books_series_foreign_key.sql"),
+    },
 ];
 
 // Apply every migration that has not yet been recorded in `schema_migrations`.
@@ -322,7 +327,7 @@ mod tests {
     }
 
     #[test]
-    fn a_database_of_the_first_schema_gets_the_second_and_keeps_its_books() {
+    fn a_database_of_the_first_schema_gets_the_later_ones_and_keeps_its_books() {
         let mut conn = Connection::open_in_memory().unwrap();
         configure(&conn).unwrap();
         // As a server of the first schema left it.
@@ -366,12 +371,13 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM reading_modes", [], |row| row.get(0))
             .unwrap();
         assert_eq!(modes, 0);
-        assert_eq!(versions(&conn), [1, 2]);
+        let every_version: Vec<i64> = MIGRATIONS.iter().map(|m| m.version).collect();
+        assert_eq!(versions(&conn), every_version);
 
         run(&mut conn).unwrap();
         assert_eq!(
             versions(&conn),
-            [1, 2],
+            every_version,
             "the next start applies nothing again"
         );
     }
@@ -699,5 +705,132 @@ mod tests {
             })
             .unwrap();
         assert_eq!(applied, MIGRATIONS.len() as i64);
+    }
+
+    /// A book with every column filled, as a scan of a CBZ with a ComicInfo.xml stores one.
+    fn insert_full_book(
+        conn: &Connection,
+        file_path: &str,
+        series: Option<i64>,
+    ) -> rusqlite::Result<i64> {
+        conn.execute(
+            "INSERT INTO books (title, author, format, language, cover_image, description, tags, \
+             file_path, page_count, volume_number, chapter_number, page_number, file_hash, \
+             last_modified, file_size, series, reading_direction) \
+             VALUES ('Berserk', 'Kentaro Miura', 'cbz', 'ja', 'abc.jpg', 'Dark fantasy', \
+             'manga,dark', ?1, 224, 1, 3, NULL, 'abc', 1700000000, 52428800, ?2, 'rtl')",
+            params![file_path, series],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    /// Every row of `books` in id order, each column as stored.
+    fn book_rows(conn: &Connection) -> Vec<Vec<rusqlite::types::Value>> {
+        let mut stmt = conn.prepare("SELECT * FROM books ORDER BY id").unwrap();
+        let columns = stmt.column_count();
+        stmt.query_map([], |row| (0..columns).map(|i| row.get(i)).collect())
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
+    }
+
+    #[test]
+    fn a_database_of_the_second_schema_keeps_every_book_and_id_as_series_becomes_a_foreign_key() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        configure(&conn).unwrap();
+        // As a server of the second schema left it.
+        conn.execute_batch(MIGRATIONS[0].sql).unwrap();
+        conn.execute_batch(MIGRATIONS[1].sql).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, \
+             applied_at INTEGER NOT NULL); \
+             INSERT INTO schema_migrations (version, applied_at) VALUES (1, 0), (2, 0);",
+        )
+        .unwrap();
+        let berserk = insert_series(&conn, "berserk");
+        insert_full_book(&conn, "/books/Berserk v01.cbz", Some(berserk)).unwrap();
+        // Without a declared key, nothing stopped a book from naming a series that doesn't exist.
+        let dangling =
+            insert_full_book(&conn, "/books/Berserk v02.cbz", Some(berserk + 41)).unwrap();
+        insert_full_book(&conn, "/books/Loose.cbz", None).unwrap();
+        let top = insert_full_book(&conn, "/books/Berserk v03.cbz", Some(berserk)).unwrap();
+        conn.execute("DELETE FROM books WHERE id = ?1", [top])
+            .unwrap();
+        let before = book_rows(&conn);
+
+        run(&mut conn).unwrap();
+
+        let series_column = conn
+            .prepare("SELECT * FROM books")
+            .unwrap()
+            .column_index("series")
+            .unwrap();
+        let dangling_row = before
+            .iter()
+            .position(|row| row[0] == rusqlite::types::Value::Integer(dangling))
+            .unwrap();
+        let mut expected = before;
+        expected[dangling_row][series_column] = rusqlite::types::Value::Null;
+        assert_eq!(book_rows(&conn), expected, "every book, id and column kept");
+
+        let next = insert_full_book(&conn, "/books/Berserk v04.cbz", Some(berserk)).unwrap();
+        assert_eq!(next, top + 1, "the deleted top id is not handed out again");
+
+        assert!(
+            insert_full_book(&conn, "/books/Ghost.cbz", Some(berserk + 41)).is_err(),
+            "a book names an existing series or none"
+        );
+        assert!(
+            insert_full_book(&conn, "/books/Berserk v01.cbz", Some(berserk)).is_err(),
+            "file paths stay unique"
+        );
+        let unknown_direction = conn.execute(
+            "INSERT INTO books (title, author, format, language, tags, file_path, \
+             reading_direction) VALUES ('t', 'a', 'cbz', 'ja', '', '/books/up.cbz', 'up')",
+            [],
+        );
+        assert!(unknown_direction.is_err(), "the direction's CHECK stays");
+
+        let index: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' \
+                 AND tbl_name = 'books' AND name = 'books_by_series'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(index, 1);
+        let mut check = conn.prepare("PRAGMA foreign_key_check").unwrap();
+        assert!(check.query([]).unwrap().next().unwrap().is_none());
+        let foreign_keys: i64 = conn
+            .query_row("PRAGMA foreign_keys", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(foreign_keys, 1, "the migration leaves foreign keys on");
+    }
+
+    #[test]
+    fn only_a_series_without_books_can_be_deleted_and_its_reading_modes_go_with_it() {
+        let conn = memory_connection();
+        let alice = insert_user(&conn, "alice");
+        let berserk = insert_series(&conn, "berserk");
+        let monster = insert_series(&conn, "monster");
+        insert_full_book(&conn, "/books/Berserk v01.cbz", Some(berserk)).unwrap();
+        for series_id in [berserk, monster] {
+            add_reading_mode(&conn, alice, series_id, "rtl").unwrap();
+        }
+
+        let refused = conn.execute("DELETE FROM series WHERE id = ?1", [berserk]);
+        assert!(refused.is_err(), "a series with books stays");
+        conn.execute("DELETE FROM series WHERE id = ?1", [monster])
+            .unwrap();
+
+        let left: Vec<i64> = conn
+            .prepare("SELECT series_id FROM reading_modes")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(left, [berserk]);
     }
 }

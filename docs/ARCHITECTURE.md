@@ -87,6 +87,7 @@
 - A column is nullable exactly when its Rust field is an `Option`.
 - Back up SQLite with `VACUUM INTO`, never by copying the file — under WAL a plain copy is not a valid backup.
 - Schema changes: a new numbered `.sql` in `migrations/`, registered in `MIGRATIONS`; an applied migration is never edited.
+- A migration rebuilds a table — create, copy with the ids and `sqlite_sequence`'s counter, drop, rename — only while no other table references it: migrations run with foreign keys on, so dropping a referenced table fires its children's `ON DELETE`. Otherwise it adds columns with `ALTER TABLE … ADD COLUMN`.
 
 ## Tests
 - A test lives in a `#[cfg(test)] mod tests` at the bottom of the file it tests; shared fixtures live in `src/test_support.rs`.
