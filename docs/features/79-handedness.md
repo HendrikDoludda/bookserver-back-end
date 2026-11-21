@@ -1,6 +1,6 @@
 # Left- and right-handed controls
 
-State: in progress
+State: completed
 
 A left- or right-handed choice, kept on each phone or tablet, that moves the on-screen controls
 to the side of the hand holding it: the reader bar's buttons ([83](83-app-layout.md)) and, once
@@ -14,4 +14,4 @@ the app has any, its floating action buttons. Page order and tap zones follow th
 - [x] 1 h · Left/right-handed switch on the settings screen ([58](58-account-screens.md)), on phones and tablets only; macOS, Windows and Linux keep the right-handed default [FE]
 - [x] 1 h · The reader bar's buttons gather at its thumb-side end, placed by physical side, not by text direction [FE]
 - [x] 0.25 h · Rule in the frontend's `docs/ARCHITECTURE.md`: a floating action button sits in the bottom corner on the thumb side, placed by physical side, not by text direction [FE]
-- [ ] 0.5 h · Check by hand on a phone: left-handed puts the reader buttons on the left, and the choice survives an app restart and a log-out
+- [x] 0.5 h · Check by hand on a phone: left-handed puts the reader buttons on the left, and the choice survives an app restart and a log-out
