@@ -20,9 +20,10 @@ use crate::{
         },
         helpers::{method_not_allowed, not_found, not_implemented, ping_server},
         library::{
-            add_library, add_series_to_library, delete_library, delete_series, get_cover,
-            get_libraries, get_page, get_pages, get_series_children, get_series_in_library,
-            list_series, remove_series_from_library, request_file, retrieve_metadata,
+            add_library, add_series_to_library, choose_library_cover, choose_series_cover,
+            delete_library, delete_series, get_cover, get_libraries, get_page, get_pages,
+            get_series_children, get_series_in_library, list_series, remove_series_from_library,
+            request_file, reset_library_cover, reset_series_cover, retrieve_metadata,
             scan_all_directories, set_reading_mode, update_library, update_series,
         },
         locales::{get_translations, list_locales},
@@ -65,9 +66,17 @@ pub fn set_up_routes() -> Router<AppState> {
             "/libraries/{id}/series/{series_id}",
             put(add_series_to_library).delete(remove_series_from_library),
         )
+        .route(
+            "/libraries/{id}/cover",
+            put(choose_library_cover).delete(reset_library_cover),
+        )
         .route("/series", get(list_series))
         .route("/series/{id}", patch(update_series).delete(delete_series))
         .route("/series/{id}/books", get(get_series_children))
+        .route(
+            "/series/{id}/cover",
+            put(choose_series_cover).delete(reset_series_cover),
+        )
         .route("/series/{id}/reading_mode", put(set_reading_mode))
         .route("/books/{id}", get(retrieve_metadata))
         .route("/books/{id}/file", get(request_file))
@@ -1305,6 +1314,212 @@ mod tests {
         }
     }
 
+    /// A series in a library, with two volumes covered by `first.png` and `second.png`; each file
+    /// holds its own name. Answers the series', the second volume's and the library's ids.
+    fn covered_series(temp: &TempDatabase) -> (i64, i64, i64) {
+        for name in ["first.png", "second.png"] {
+            temp.covers.write(name, name.as_bytes());
+        }
+        temp.db
+            .setup_new_transaction(|conn| {
+                conn.execute("INSERT INTO series (name) VALUES ('berserk')", [])
+                    .unwrap();
+                let series = conn.last_insert_rowid();
+                for (volume, cover) in [(1, "first.png"), (2, "second.png")] {
+                    conn.execute(
+                        "INSERT INTO books (title, author, format, language, tags, file_path, \
+                         volume_number, series, cover_image) \
+                         VALUES ('Berserk', 'Kentaro Miura', 'cbz', 'ja', '', ?1, ?2, ?3, ?4)",
+                        rusqlite::params![
+                            format!("/books/Berserk v{volume}.cbz"),
+                            volume,
+                            series,
+                            cover
+                        ],
+                    )
+                    .unwrap();
+                }
+                let second = conn.last_insert_rowid();
+                conn.execute(
+                    "INSERT INTO library (library_name, library_type) VALUES ('manga', 'comics')",
+                    [],
+                )
+                .unwrap();
+                let library = conn.last_insert_rowid();
+                conn.execute(
+                    "INSERT INTO library_elements (library_id, series_id) VALUES (?1, ?2)",
+                    [library, series],
+                )
+                .unwrap();
+                Ok((series, second, library))
+            })
+            .unwrap()
+    }
+
+    /// The body of the cover that `GET uri` serves.
+    async fn served_cover(app: &Router, token: &str, uri: &str) -> Vec<u8> {
+        let (status, _, body) = call(app, authorized("GET", uri, token, None)).await;
+        assert_eq!(status, StatusCode::OK, "{uri}");
+        body
+    }
+
+    #[tokio::test]
+    async fn an_admin_chooses_covers_and_the_cover_route_serves_them_until_they_are_deleted() {
+        let temp = TempDatabase::open();
+        let admin = logged_in(&temp, "alice", "admin");
+        let (series, second, library) = covered_series(&temp);
+        let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
+        let series_cover = format!("/api/v1/series/{series}/cover");
+        let library_cover = format!("/api/v1/libraries/{library}/cover");
+        let shown_for_series = format!("/api/v1/covers/series/{series}");
+        let shown_for_library = format!("/api/v1/covers/library/{library}");
+
+        for (uri, body) in [
+            (&series_cover, serde_json::json!({ "book_id": second })),
+            (&library_cover, serde_json::json!({ "series_id": series })),
+        ] {
+            let (status, _, answer) = call(&app, authorized("PUT", uri, &admin, Some(body))).await;
+            assert_eq!(status, StatusCode::NO_CONTENT, "{uri}");
+            assert!(answer.is_empty(), "{uri}");
+        }
+        assert_eq!(
+            served_cover(&app, &admin, &shown_for_series).await,
+            b"second.png"
+        );
+        assert_eq!(
+            served_cover(&app, &admin, &shown_for_library).await,
+            b"second.png"
+        );
+
+        let (status, _, _) = call(&app, authorized("DELETE", &series_cover, &admin, None)).await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        assert_eq!(
+            served_cover(&app, &admin, &shown_for_series).await,
+            b"first.png",
+            "the first volume's again"
+        );
+        assert_eq!(
+            served_cover(&app, &admin, &shown_for_library).await,
+            b"second.png",
+            "the library keeps the picture it was given"
+        );
+
+        let (status, _, _) = call(&app, authorized("DELETE", &library_cover, &admin, None)).await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        assert_eq!(
+            served_cover(&app, &admin, &shown_for_library).await,
+            b"first.png",
+            "its series' again"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_cover_choice_answers_400_or_404_json_and_only_an_admin_makes_one() {
+        let temp = TempDatabase::open();
+        let admin = logged_in(&temp, "alice", "admin");
+        let member = logged_in(&temp, "bob", "member");
+        let (series, second, library) = covered_series(&temp);
+        let monster = scanned_series(&temp, "monster");
+        let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
+        let series_cover = format!("/api/v1/series/{series}/cover");
+        let library_cover = format!("/api/v1/libraries/{library}/cover");
+
+        for (method, uri, body, status, key) in [
+            // A book no series has, a body without `book_id`, a series the library doesn't hold.
+            (
+                "PUT",
+                series_cover.clone(),
+                Some(serde_json::json!({ "book_id": second + 100 })),
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
+            ),
+            (
+                "PUT",
+                series_cover.clone(),
+                Some(serde_json::json!({ "series_id": series })),
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
+            ),
+            (
+                "PUT",
+                library_cover.clone(),
+                Some(serde_json::json!({ "series_id": monster })),
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
+            ),
+            (
+                "PUT",
+                "/api/v1/series/999/cover".to_string(),
+                Some(serde_json::json!({ "book_id": second })),
+                StatusCode::NOT_FOUND,
+                "not_found",
+            ),
+            (
+                "DELETE",
+                "/api/v1/series/999/cover".to_string(),
+                None,
+                StatusCode::NOT_FOUND,
+                "not_found",
+            ),
+            (
+                "PUT",
+                "/api/v1/libraries/999/cover".to_string(),
+                Some(serde_json::json!({ "series_id": series })),
+                StatusCode::NOT_FOUND,
+                "not_found",
+            ),
+            (
+                "DELETE",
+                "/api/v1/libraries/999/cover".to_string(),
+                None,
+                StatusCode::NOT_FOUND,
+                "not_found",
+            ),
+        ] {
+            let (answered, _, answer) = call(&app, authorized(method, &uri, &admin, body)).await;
+            assert_eq!(answered, status, "{method} {uri}");
+            assert_eq!(
+                json(&answer),
+                serde_json::json!({ "error": key }),
+                "{method} {uri}"
+            );
+        }
+
+        for (method, uri, body) in [
+            (
+                "PUT",
+                &series_cover,
+                Some(serde_json::json!({ "book_id": second })),
+            ),
+            ("DELETE", &series_cover, None),
+            (
+                "PUT",
+                &library_cover,
+                Some(serde_json::json!({ "series_id": series })),
+            ),
+            ("DELETE", &library_cover, None),
+        ] {
+            let (status, _, answer) = call(&app, authorized(method, uri, &member, body)).await;
+            assert_eq!(status, StatusCode::FORBIDDEN, "{method} {uri}");
+            assert_eq!(json(&answer), serde_json::json!({ "error": "forbidden" }));
+        }
+
+        let stored: (Option<String>, Option<String>) = temp
+            .db
+            .setup_new_transaction(|conn| {
+                Ok(conn
+                    .query_row(
+                        "SELECT (SELECT cover_image FROM series WHERE id = ?1), \
+                         (SELECT cover_image FROM library WHERE id = ?2)",
+                        [series, library],
+                        |row| Ok((row.get(0)?, row.get(1)?)),
+                    )
+                    .unwrap())
+            })
+            .unwrap();
+        assert_eq!(stored, (None, None), "nothing refused was stored");
+    }
+
     #[tokio::test]
     async fn a_books_file_streams_and_a_folder_or_a_file_gone_answers_404_json() {
         let temp = TempDatabase::open();
@@ -2230,10 +2445,14 @@ mod tests {
         ("GET", "/api/v1/libraries/1/series"),
         ("PUT", "/api/v1/libraries/1/series/1"),
         ("DELETE", "/api/v1/libraries/1/series/1"),
+        ("PUT", "/api/v1/libraries/1/cover"),
+        ("DELETE", "/api/v1/libraries/1/cover"),
         ("GET", "/api/v1/series"),
         ("PATCH", "/api/v1/series/1"),
         ("DELETE", "/api/v1/series/1"),
         ("GET", "/api/v1/series/1/books"),
+        ("PUT", "/api/v1/series/1/cover"),
+        ("DELETE", "/api/v1/series/1/cover"),
         ("PUT", "/api/v1/series/1/reading_mode"),
         ("GET", "/api/v1/books/1"),
         ("GET", "/api/v1/books/1/file"),

@@ -16,8 +16,9 @@ use axum::{
 use crate::{
     book_pages::{self, PageContent},
     data_models::books_model::{
-        BookDetails, BookSummary, LibraryChanges, LibrarySummary, NewLibrary, PageSummary,
-        ReadingModeChange, ReadingModeSetting, SeriesChanges, SeriesListing, SeriesSummary,
+        BookDetails, BookSummary, LibraryChanges, LibraryCoverChoice, LibrarySummary, NewLibrary,
+        PageSummary, ReadingModeChange, ReadingModeSetting, SeriesChanges, SeriesCoverChoice,
+        SeriesListing, SeriesSummary,
     },
     db::Database,
     error_types::{internal_error_response, AppErrors, DatabaseError, PageError},
@@ -312,6 +313,49 @@ pub async fn delete_series(
     PathParams(id): PathParams<i64>,
 ) -> Result<StatusCode, AppErrors> {
     library_management::delete_series(db, id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// `PUT /api/v1/series/{id}/cover` with `{"book_id"}`: the series shows that book's cover.
+pub async fn choose_series_cover(
+    _admin: AdminSession,
+    State(db): State<Arc<Database>>,
+    PathParams(id): PathParams<i64>,
+    JsonBody(choice): JsonBody<SeriesCoverChoice>,
+) -> Result<StatusCode, AppErrors> {
+    library_management::choose_series_cover(db, id, choice.book_id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// `DELETE /api/v1/series/{id}/cover`: the series shows its automatic cover again.
+pub async fn reset_series_cover(
+    _admin: AdminSession,
+    State(db): State<Arc<Database>>,
+    PathParams(id): PathParams<i64>,
+) -> Result<StatusCode, AppErrors> {
+    library_management::reset_series_cover(db, id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// `PUT /api/v1/libraries/{id}/cover` with `{"series_id"}`: the library shows the cover that
+/// series shows now.
+pub async fn choose_library_cover(
+    _admin: AdminSession,
+    State(db): State<Arc<Database>>,
+    PathParams(id): PathParams<i64>,
+    JsonBody(choice): JsonBody<LibraryCoverChoice>,
+) -> Result<StatusCode, AppErrors> {
+    library_management::choose_library_cover(db, id, choice.series_id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// `DELETE /api/v1/libraries/{id}/cover`: the library shows its automatic cover again.
+pub async fn reset_library_cover(
+    _admin: AdminSession,
+    State(db): State<Arc<Database>>,
+    PathParams(id): PathParams<i64>,
+) -> Result<StatusCode, AppErrors> {
+    library_management::reset_library_cover(db, id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

@@ -1,5 +1,5 @@
 //! What an admin changes about libraries and series: creating and editing libraries, which series
-//! they hold, and editing and deleting series.
+//! they hold, editing and deleting series, and the covers both show.
 
 use std::{ops::RangeInclusive, sync::Arc};
 
@@ -12,9 +12,10 @@ use crate::{
     db::Database,
     error_types::{AppErrors, DatabaseError, LibraryError},
     models::{
-        BookSeriesMetadata, DatabaseTypes, LibraryDatabaseColumns, LibraryMetadata,
+        BookMetadata, BookSeriesMetadata, DatabaseTypes, LibraryDatabaseColumns, LibraryMetadata,
         SeriesDatabaseColumns, SeriesLibraryConnection, WithId,
     },
+    routes::covers,
 };
 
 /// Room for any real title, while a pasted page of text is still refused.
@@ -234,6 +235,93 @@ pub async fn delete_series(db: Arc<Database>, series_id: i64) -> Result<(), AppE
         Ok(())
     })
     .await
+}
+
+/// The series shows the cover of one of its books. A book of another series, or one without a
+/// cover, is refused.
+pub async fn choose_series_cover(
+    db: Arc<Database>,
+    series_id: i64,
+    book_id: i64,
+) -> Result<(), AppErrors> {
+    db.transact(move |conn| {
+        Database::get_entry_with_connection::<BookSeriesMetadata>(conn, series_id)?;
+        let cover = match Database::get_entry_with_connection::<BookMetadata>(conn, book_id) {
+            Ok(book) if book.series == Some(series_id) => book.cover_image,
+            Ok(_) | Err(DatabaseError::EntryNotFound) => None,
+            Err(error) => return Err(error.into()),
+        };
+        let cover = cover.ok_or(AppErrors::InvalidRequest)?;
+        store_series_cover(conn, series_id, Some(cover))
+    })
+    .await
+}
+
+/// The series shows its automatic cover again.
+pub async fn reset_series_cover(db: Arc<Database>, series_id: i64) -> Result<(), AppErrors> {
+    db.transact(move |conn| {
+        Database::get_entry_with_connection::<BookSeriesMetadata>(conn, series_id)?;
+        store_series_cover(conn, series_id, None)
+    })
+    .await
+}
+
+/// The library shows the cover one of its series shows now — its own, or the one it falls back
+/// to — and keeps that picture when the series' cover changes later. A series the library
+/// doesn't hold, or one without a cover, is refused.
+pub async fn choose_library_cover(
+    db: Arc<Database>,
+    library_id: i64,
+    series_id: i64,
+) -> Result<(), AppErrors> {
+    db.transact(move |conn| {
+        Database::get_entry_with_connection::<LibraryMetadata>(conn, library_id)?;
+        if !Database::library_holds_series_with_connection(conn, library_id, series_id)? {
+            return Err(AppErrors::InvalidRequest);
+        }
+        let cover = covers::series_cover(conn, series_id)?.ok_or(AppErrors::InvalidRequest)?;
+        store_library_cover(conn, library_id, Some(cover))
+    })
+    .await
+}
+
+/// The library shows its automatic cover again.
+pub async fn reset_library_cover(db: Arc<Database>, library_id: i64) -> Result<(), AppErrors> {
+    db.transact(move |conn| {
+        Database::get_entry_with_connection::<LibraryMetadata>(conn, library_id)?;
+        store_library_cover(conn, library_id, None)
+    })
+    .await
+}
+
+/// Stores the cover file a series shows; `None` leaves it to the automatic one.
+fn store_series_cover(
+    conn: &Connection,
+    series_id: i64,
+    cover: Option<String>,
+) -> Result<(), AppErrors> {
+    Database::update_multiple_values_with_connection::<BookSeriesMetadata>(
+        conn,
+        &[SeriesDatabaseColumns::CoverImage],
+        &[&cover],
+        series_id,
+    )?;
+    Ok(())
+}
+
+/// Stores the cover file a library shows; `None` leaves it to the automatic one.
+fn store_library_cover(
+    conn: &Connection,
+    library_id: i64,
+    cover: Option<String>,
+) -> Result<(), AppErrors> {
+    Database::update_multiple_values_with_connection::<LibraryMetadata>(
+        conn,
+        &[LibraryDatabaseColumns::CoverImage],
+        &[&cover],
+        library_id,
+    )?;
+    Ok(())
 }
 
 /// `DatabaseError::EntryNotFound` unless both the library and the series exist.
@@ -704,5 +792,170 @@ mod tests {
                 (monster, "Monster", 0, [].as_slice()),
             ]
         );
+    }
+
+    /// A book of the series with this volume and cover file; answers its id.
+    fn add_book_with_cover(
+        temp: &TempDatabase,
+        series_id: i64,
+        volume: i64,
+        cover: Option<&str>,
+    ) -> i64 {
+        temp.db
+            .setup_new_transaction(|conn| {
+                conn.execute(
+                    "INSERT INTO books (title, author, format, language, tags, file_path, \
+                     volume_number, series, cover_image) \
+                     VALUES ('Berserk', 'Kentaro Miura', 'cbz', 'ja', '', ?1, ?2, ?3, ?4)",
+                    rusqlite::params![
+                        format!("/books/{series_id} v{volume}.cbz"),
+                        volume,
+                        series_id,
+                        cover
+                    ],
+                )
+                .unwrap();
+                Ok(conn.last_insert_rowid())
+            })
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_series_shows_the_book_cover_chosen_for_it_until_the_choice_is_deleted() {
+        let temp = TempDatabase::open();
+        let berserk = add_series_row(&temp, "berserk");
+        add_book_with_cover(&temp, berserk, 1, Some("first.png"));
+        let second = add_book_with_cover(&temp, berserk, 2, Some("second.png"));
+        let shown = || covers::cover_path(temp.db.clone(), covers::CoverKind::Series, berserk);
+
+        choose_series_cover(temp.db.clone(), berserk, second)
+            .await
+            .unwrap();
+        assert_eq!(shown().await.unwrap().as_deref(), Some("second.png"));
+
+        reset_series_cover(temp.db.clone(), berserk).await.unwrap();
+        assert_eq!(
+            shown().await.unwrap().as_deref(),
+            Some("first.png"),
+            "the first book's again"
+        );
+        // Deleting a choice that isn't there changes nothing and is no error.
+        reset_series_cover(temp.db.clone(), berserk).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_series_cover_from_another_series_or_a_book_without_one_is_refused() {
+        let temp = TempDatabase::open();
+        let berserk = add_series_row(&temp, "berserk");
+        let monster = add_series_row(&temp, "monster");
+        let chosen = add_book_with_cover(&temp, berserk, 1, Some("first.png"));
+        let coverless = add_book_with_cover(&temp, berserk, 2, None);
+        let elsewhere = add_book_with_cover(&temp, monster, 1, Some("monster.png"));
+        choose_series_cover(temp.db.clone(), berserk, chosen)
+            .await
+            .unwrap();
+
+        for book in [coverless, elsewhere, elsewhere + 100] {
+            let refused = choose_series_cover(temp.db.clone(), berserk, book).await;
+            assert!(
+                matches!(refused, Err(AppErrors::InvalidRequest)),
+                "book {book}"
+            );
+        }
+        for result in [
+            choose_series_cover(temp.db.clone(), monster + 100, chosen).await,
+            reset_series_cover(temp.db.clone(), monster + 100).await,
+        ] {
+            assert!(matches!(
+                result,
+                Err(AppErrors::Database(DatabaseError::EntryNotFound))
+            ));
+        }
+        let stored = temp.db.get_entry::<BookSeriesMetadata>(berserk).unwrap();
+        assert_eq!(
+            stored.cover_image.as_deref(),
+            Some("first.png"),
+            "a refused choice changes nothing"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_library_shows_the_cover_a_series_of_it_showed_until_the_choice_is_deleted() {
+        let temp = TempDatabase::open();
+        let library = create_library(temp.db.clone(), new_library("Favourites"))
+            .await
+            .unwrap()
+            .id;
+        let berserk = add_series_row(&temp, "berserk");
+        let monster = add_series_row(&temp, "monster");
+        add_book_with_cover(&temp, berserk, 1, Some("berserk.png"));
+        add_book_with_cover(&temp, monster, 1, Some("monster.png"));
+        let second = add_book_with_cover(&temp, monster, 2, Some("monster-two.png"));
+        for series_id in [berserk, monster] {
+            add_series(temp.db.clone(), library, series_id)
+                .await
+                .unwrap();
+        }
+        let shown = || covers::cover_path(temp.db.clone(), covers::CoverKind::Library, library);
+
+        // Monster has no cover of its own, so the library takes the one it falls back to.
+        choose_library_cover(temp.db.clone(), library, monster)
+            .await
+            .unwrap();
+        assert_eq!(shown().await.unwrap().as_deref(), Some("monster.png"));
+
+        choose_series_cover(temp.db.clone(), monster, second)
+            .await
+            .unwrap();
+        assert_eq!(
+            shown().await.unwrap().as_deref(),
+            Some("monster.png"),
+            "the library keeps the picture it was given"
+        );
+        choose_library_cover(temp.db.clone(), library, monster)
+            .await
+            .unwrap();
+        assert_eq!(shown().await.unwrap().as_deref(), Some("monster-two.png"));
+
+        reset_library_cover(temp.db.clone(), library).await.unwrap();
+        assert_eq!(
+            shown().await.unwrap().as_deref(),
+            Some("berserk.png"),
+            "its first series by name again"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_library_cover_from_a_series_it_doesnt_hold_or_one_without_a_cover_is_refused() {
+        let temp = TempDatabase::open();
+        let library = create_library(temp.db.clone(), new_library("Favourites"))
+            .await
+            .unwrap()
+            .id;
+        let coverless = add_series_row(&temp, "empty");
+        let elsewhere = add_series_row(&temp, "monster");
+        add_book_with_cover(&temp, elsewhere, 1, Some("monster.png"));
+        add_series(temp.db.clone(), library, coverless)
+            .await
+            .unwrap();
+
+        for series_id in [coverless, elsewhere, elsewhere + 100] {
+            let refused = choose_library_cover(temp.db.clone(), library, series_id).await;
+            assert!(
+                matches!(refused, Err(AppErrors::InvalidRequest)),
+                "series {series_id}"
+            );
+        }
+        for result in [
+            choose_library_cover(temp.db.clone(), library + 1, elsewhere).await,
+            reset_library_cover(temp.db.clone(), library + 1).await,
+        ] {
+            assert!(matches!(
+                result,
+                Err(AppErrors::Database(DatabaseError::EntryNotFound))
+            ));
+        }
+        let stored = temp.db.get_entry::<LibraryMetadata>(library).unwrap();
+        assert_eq!(stored.cover_image, None, "a refused choice changes nothing");
     }
 }

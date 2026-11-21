@@ -141,10 +141,14 @@ library or a series also need an admin (403 for a member). Implemented endpoints
 | `PATCH` | `/api/v1/libraries/{id}` | Change a library's `name`, `library_type` or `description`; a field left out stays, `"description": null` clears it; answers the library |
 | `PUT` | `/api/v1/libraries/{id}/series/{series_id}` | Put a series into a library; `204`, also when it was there already |
 | `DELETE` | `/api/v1/libraries/{id}/series/{series_id}` | Take a series out of a library — the series and its books stay; `204` |
+| `PUT` | `/api/v1/libraries/{id}/cover` | Show the cover that a series of the library shows now — its own or its automatic one — from `{"series_id"}`; `204`, or `400 invalid_request` for a series the library doesn't hold or one without a cover |
+| `DELETE` | `/api/v1/libraries/{id}/cover` | Back to the automatic cover, its first series' by name; `204` |
 | `GET` | `/api/v1/series` | Every series by name, with its `book_count` and the `library_ids` it is in |
 | `PATCH` | `/api/v1/series/{id}` | Change a series' `name`, `description`, `start_release_year` or `end_release_year`; a field left out stays, `null` clears it. Years are 1–9999, the first not after the last (`400 invalid_release_years`); answers the series |
 | `DELETE` | `/api/v1/series/{id}` | Delete a series without books, with its library links and reading modes — `204`, or `409 series_not_empty` while it has books |
 | `GET` | `/api/v1/series/{id}/books` | Books in a series |
+| `PUT` | `/api/v1/series/{id}/cover` | Show the cover of one of the series' books, from `{"book_id"}`; `204`, or `400 invalid_request` for a book of another series or one without a cover |
+| `DELETE` | `/api/v1/series/{id}/cover` | Back to the automatic cover, its first book's in reading order; `204` |
 | `GET` | `/api/v1/books/{id}` | One book's metadata |
 | `GET` | `/api/v1/books/{id}/file` | Stream the book file (supports `Range`) |
 | `GET` | `/api/v1/books/{id}/pages` | The pages of an image-folder or CBZ book, `[{"number": 1}, …]`, in natural order of their file names; `404 not_found` for other formats |

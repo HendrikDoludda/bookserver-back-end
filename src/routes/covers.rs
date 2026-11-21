@@ -41,7 +41,10 @@ pub async fn cover_path(
 
 // The fallback is worked out at every read and never stored: a stored one couldn't be told apart
 // from a cover a user chose, so a re-scan could never safely replace it.
-fn series_cover(conn: &Connection, series_id: i64) -> Result<Option<String>, DatabaseError> {
+pub(crate) fn series_cover(
+    conn: &Connection,
+    series_id: i64,
+) -> Result<Option<String>, DatabaseError> {
     let series = Database::get_entry_with_connection::<BookSeriesMetadata>(conn, series_id)?;
     match series.cover_image {
         Some(own) => Ok(Some(own)),

@@ -88,6 +88,18 @@ pub struct SeriesChanges {
     pub end_release_year: Option<Option<i64>>,
 }
 
+/// `PUT /api/v1/series/{id}/cover`: the book whose cover the series shows.
+#[derive(Debug, Deserialize)]
+pub struct SeriesCoverChoice {
+    pub book_id: i64,
+}
+
+/// `PUT /api/v1/libraries/{id}/cover`: the series whose cover the library shows.
+#[derive(Debug, Deserialize)]
+pub struct LibraryCoverChoice {
+    pub series_id: i64,
+}
+
 /// Reads a PATCH field that can be cleared, together with `#[serde(default)]`: left out is
 /// `None`, `null` is `Some(None)`, a value is `Some(Some(value))`.
 // A plain `Option` reads a left-out field and `null` alike, so nothing could be cleared.
