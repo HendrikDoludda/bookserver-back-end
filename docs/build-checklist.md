@@ -25,7 +25,7 @@
 | Reader view settings | F1 | completed | [81-reader-view-settings](features/81-reader-view-settings.md) |
 | Table of contents | F1 | completed | [82-table-of-contents](features/82-table-of-contents.md) |
 | App layout | F1 | completed | [83-app-layout](features/83-app-layout.md) |
-| Library & series management | 2 | in progress | [01-library-and-series-management](features/01-library-and-series-management.md) |
+| Library & series management | 2 | completed | [01-library-and-series-management](features/01-library-and-series-management.md) |
 | Directory scanning | 2 | in progress | [34-directory-scanning](features/34-directory-scanning.md) |
 | Scannable directories | 2 | not started | [35-scannable-directories](features/35-scannable-directories.md) |
 | Covers | 2 | in progress | [36-covers](features/36-covers.md) |

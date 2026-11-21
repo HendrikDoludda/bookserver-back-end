@@ -20,7 +20,7 @@ use crate::data_models::models::{
 use crate::db::Database;
 use crate::error_types::{DatabaseError, FolderScannerError};
 use crate::scanner::comic_info;
-use crate::scanner::cover_image_retriever::get_cover_image;
+use crate::scanner::cover_image_retriever::{cover_for, Covers};
 
 // Filename patterns, compiled once on first use and then reused.
 static VOLUME_REGEX: Lazy<Regex> =
@@ -34,12 +34,18 @@ static PAGE_REGEX: Lazy<Regex> =
 
 /// Scans every directory in `BOOK_DIRS` for supported files and creates database
 /// entries for them. Each directory becomes (or reuses) a library.
-pub async fn scan_all_folders(db: Arc<Database>) -> anyhow::Result<()> {
+pub async fn scan_all_folders(db: Arc<Database>, covers: Covers) -> anyhow::Result<()> {
     let folders = config::get_books_dirs();
 
     for folder in folders {
         let library_id = get_library_id(folder.clone(), &db)?;
-        scan_folder(PathBuf::from(folder), db.clone(), library_id).await?;
+        scan_folder(
+            PathBuf::from(folder),
+            db.clone(),
+            library_id,
+            covers.clone(),
+        )
+        .await?;
     }
 
     Ok(())
@@ -51,6 +57,7 @@ pub async fn scan_folder(
     path: PathBuf,
     db: Arc<Database>,
     library_id: i64,
+    covers: Covers,
 ) -> Result<(), FolderScannerError> {
     let semaphore = Arc::new(Semaphore::new(1)); // limit concurrency
     let mut directories = vec![path];
@@ -71,6 +78,7 @@ pub async fn scan_folder(
                 directories.push(entry_path);
             } else {
                 let db = db.clone();
+                let covers = covers.clone();
                 let permit = semaphore
                     .clone()
                     .acquire_owned()
@@ -81,7 +89,7 @@ pub async fn scan_folder(
                     let _permit = permit;
 
                     if let Err(e) = tokio::task::spawn_blocking(move || {
-                        create_book_entry(&entry_path, &db, library_id)
+                        create_book_entry(&entry_path, &db, library_id, &covers)
                     })
                     .await
                     {
@@ -101,6 +109,7 @@ fn create_book_entry(
     path: &Path,
     db: &Database,
     library_id: i64,
+    covers: &Covers,
 ) -> Result<(), FolderScannerError> {
     if !is_valid_file_type(path) {
         return Ok(());
@@ -133,11 +142,7 @@ fn create_book_entry(
             None
         }
     };
-    let cover_image = get_cover_image_location(
-        &final_path,
-        format.clone(),
-        &file_hash.clone().unwrap_or_default(),
-    );
+    let cover_image = cover_for(covers, &final_path, &format, file_hash.as_deref());
     let reading_direction = comic_info::reading_direction(&format, &final_path);
 
     let metadata_entry = BookMetadata {
@@ -205,16 +210,6 @@ fn get_file_metadata(file: &File, path: &Path) -> FileExtractedMetadata {
             page_number: None,
             language_code: BookLanguage::Other("Unknown".to_string()),
             author: "Unknown Author".to_string(),
-        }
-    }
-}
-
-fn get_cover_image_location(path: &Path, format: BookFormat, hash: &str) -> Option<String> {
-    match get_cover_image(path, format, hash) {
-        Ok(cover_path) => cover_path.to_str().map(String::from),
-        Err(e) => {
-            error!("Failed cover creation for path {:?}: {}", path, e);
-            None
         }
     }
 }
@@ -391,11 +386,17 @@ mod tests {
         .unwrap()
     }
 
-    // The CBZs' pages are no real images, so the cover step stops before it would write into
-    // `./cover_images/`.
+    fn covers_in(dir: &TempDir) -> Covers {
+        Covers {
+            folder: dir.path().join("covers"),
+            pdfium: None,
+        }
+    }
+
     #[test]
     fn a_scanned_cbz_keeps_the_direction_its_comic_info_states() {
         let dir = TempDir::new();
+        let covers = covers_in(&dir);
         let temp = TempDatabase::open();
         let library_id = create_library_entry("manga".to_string(), &temp.db).unwrap();
         let berserk = dir.write_cbz(
@@ -407,10 +408,52 @@ mod tests {
         );
         let pluto = dir.write_cbz("Pluto v01.cbz", &[("001.jpg", b"not a picture")]);
 
-        create_book_entry(&berserk, &temp.db, library_id).unwrap();
-        create_book_entry(&pluto, &temp.db, library_id).unwrap();
+        create_book_entry(&berserk, &temp.db, library_id, &covers).unwrap();
+        create_book_entry(&pluto, &temp.db, library_id, &covers).unwrap();
 
         assert_eq!(stored_direction(&temp.db, &berserk).as_deref(), Some("rtl"));
         assert_eq!(stored_direction(&temp.db, &pluto), None);
+    }
+
+    fn stored_cover(db: &Database, file_path: &Path) -> Option<String> {
+        db.setup_new_transaction(|conn| {
+            Ok(conn
+                .query_row(
+                    "SELECT cover_image FROM books WHERE file_path = ?1",
+                    [file_path.to_string_lossy()],
+                    |row| row.get(0),
+                )
+                .unwrap())
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn a_pdf_without_pdfium_is_catalogued_without_a_cover() {
+        let dir = TempDir::new();
+        let covers = covers_in(&dir);
+        let temp = TempDatabase::open();
+        let library_id = create_library_entry("books".to_string(), &temp.db).unwrap();
+        let pdf = dir.write("Berserk v01.pdf", b"%PDF-1.7 tiny");
+
+        create_book_entry(&pdf, &temp.db, library_id, &covers).unwrap();
+
+        assert_eq!(stored_cover(&temp.db, &pdf), None);
+    }
+
+    #[test]
+    fn a_scanned_cbz_stores_its_cover_by_name_from_the_given_folder() {
+        let dir = TempDir::new();
+        let covers = covers_in(&dir);
+        let temp = TempDatabase::open();
+        let library_id = create_library_entry("manga".to_string(), &temp.db).unwrap();
+        let page = crate::test_support::encoded_image(image::ImageFormat::Png, 2, 3);
+        let cbz = dir.write_cbz("Berserk v01.cbz", &[("001.png", &page)]);
+
+        create_book_entry(&cbz, &temp.db, library_id, &covers).unwrap();
+
+        let name = stored_cover(&temp.db, &cbz).expect("a cover");
+        assert!(!name.contains('/'), "a bare file name: {name}");
+        assert_eq!(std::fs::read(covers.path_of(&name)).unwrap(), page);
     }
 }

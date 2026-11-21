@@ -1,6 +1,6 @@
 # Library & series management
 
-State: in progress
+State: completed
 
 Libraries are made by hand or by a directory's toggle ([35](35-scannable-directories.md)); this
 makes libraries and series manageable — create a library and choose its series, edit and delete

@@ -1,59 +1,113 @@
 use epub_parser::Epub;
 use image::ImageFormat;
 use pdfium_render::prelude::*;
-use std::fs;
+use std::fs::{self, File};
+use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use crate::{book_pages, data_models::models::BookFormat, error_types::CoverImageError};
 
-const COVER_DIR: &str = "./cover_images/";
 const DEFAULT_IMAGE: &str = "example-cover.png";
 
-/// Extracts a cover image for the file at `path` into `./cover_images/`, named by
-/// the file's content hash, and returns the cover's path.
-pub fn get_cover_image(
-    path: &Path,
-    format: BookFormat,
-    hash: &str,
-) -> Result<PathBuf, CoverImageError> {
-    match format {
-        BookFormat::Pdf => get_pdf_cover_image(path, None, hash),
-        BookFormat::Cbz => get_cbz_cover_image(path, hash),
-        BookFormat::Epub => get_epub_cover_image(path, hash),
-        BookFormat::ImageComic => get_image_comic_cover_image(path, hash),
-        BookFormat::None => Ok(get_fallback_cover()),
+/// The extensions a cover can have; an existing cover is looked for under each.
+const COVER_EXTENSIONS: [&str; 4] = ["jpg", "png", "webp", "gif"];
+
+/// Where covers are written and served from, and the PDFium library that renders a PDF's first
+/// page.
+#[derive(Clone)]
+pub struct Covers {
+    /// The folder every cover file lies in; a row names a file in it.
+    pub folder: PathBuf,
+    /// `None` without the library: a PDF then gets no cover, but still its row.
+    pub pdfium: Option<Arc<Pdfium>>,
+}
+
+impl Covers {
+    /// The cover file a row names.
+    pub fn path_of(&self, name: &str) -> PathBuf {
+        self.folder.join(name)
     }
 }
 
-fn get_fallback_cover() -> PathBuf {
-    Path::new(COVER_DIR).join(DEFAULT_IMAGE)
+/// Binds the PDFium library once: from the working directory, else from the system's library
+/// path. `None`, with a warning, when neither has it.
+// `Pdfium::default()` tries the same two places, but panics when both fail.
+pub fn bind_pdfium() -> Option<Pdfium> {
+    let bindings = Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("./"))
+        .or_else(|_| Pdfium::bind_to_system_library());
+    match bindings {
+        Ok(bindings) => Some(Pdfium::new(bindings)),
+        Err(error) => {
+            tracing::warn!("The PDFium library can't be loaded, so PDFs get no cover: {error:?}");
+            None
+        }
+    }
 }
 
-fn get_cbz_cover_image(path: &Path, hash: &str) -> Result<PathBuf, CoverImageError> {
-    let (image_data, _) = book_pages::archive_page(path, 1, book_pages::MAX_PAGE_BYTES)?;
-
-    let format =
-        image::guess_format(&image_data).map_err(|_| CoverImageError::ImageFormatFailed)?;
-    let extension = format.extensions_str().first().copied().unwrap_or("png");
-
-    let final_path = get_cover_output_path(hash, extension)?;
-
-    let result = create_image_at_location(&final_path, &image_data)?;
-
-    Ok(result)
-}
-
-// TODO: bundle the PDFium library with the project so PDF covers work on every OS
-// (and on macOS without symlinking the dylib).
-fn get_pdf_cover_image(
+/// The file name of the cover for the book at `path`: one already in the cover folder under the
+/// file's hash, else one extracted now. `None` when the book can't have one — no hash, a PDF
+/// without PDFium, no picture to take — or when extracting fails, which is logged.
+pub fn cover_for(
+    covers: &Covers,
     path: &Path,
-    password: Option<&str>,
-    hash: &str,
-) -> Result<PathBuf, CoverImageError> {
-    let pdfium = Pdfium::default();
+    format: &BookFormat,
+    hash: Option<&str>,
+) -> Option<String> {
+    // Covers are named by the hash: without one, every such book would share one file.
+    let hash = hash.filter(|hash| !hash.is_empty())?;
+    match extract(covers, path, format, hash) {
+        Ok(name) => name,
+        Err(error) => {
+            tracing::error!("Failed cover creation for path {path:?}: {error}");
+            None
+        }
+    }
+}
 
+fn extract(
+    covers: &Covers,
+    path: &Path,
+    format: &BookFormat,
+    hash: &str,
+) -> Result<Option<String>, CoverImageError> {
+    if let Some(existing) = existing_cover(&covers.folder, hash) {
+        return Ok(Some(existing));
+    }
+    match format {
+        BookFormat::Pdf => match &covers.pdfium {
+            Some(pdfium) => pdf_cover(pdfium, &covers.folder, path, hash).map(Some),
+            None => Ok(None),
+        },
+        BookFormat::Cbz => cbz_cover(&covers.folder, path, hash).map(Some),
+        BookFormat::Epub => epub_cover(&covers.folder, path, hash).map(Some),
+        BookFormat::ImageComic => folder_cover(&covers.folder, path, hash).map(Some),
+        BookFormat::None => Ok(Some(DEFAULT_IMAGE.to_string())),
+    }
+}
+
+/// The name of a cover already extracted for `hash`, under any extension.
+fn existing_cover(folder: &Path, hash: &str) -> Option<String> {
+    COVER_EXTENSIONS
+        .iter()
+        .map(|extension| format!("{hash}.{extension}"))
+        .find(|name| folder.join(name).is_file())
+}
+
+fn cbz_cover(folder: &Path, path: &Path, hash: &str) -> Result<String, CoverImageError> {
+    let (image_data, _) = book_pages::archive_page(path, 1, book_pages::MAX_PAGE_BYTES)?;
+    let extension = image_extension(&image_data)?;
+    write_cover(folder, hash, extension, &image_data)
+}
+
+fn pdf_cover(
+    pdfium: &Pdfium,
+    folder: &Path,
+    path: &Path,
+    hash: &str,
+) -> Result<String, CoverImageError> {
     let document = pdfium
-        .load_pdf_from_file(path, password)
+        .load_pdf_from_file(path, None)
         .map_err(|_| CoverImageError::PdfToDocumentError)?;
 
     let render_config = PdfRenderConfig::new()
@@ -75,76 +129,169 @@ fn get_pdf_cover_image(
         .map_err(|_| CoverImageError::CoverCreationFailed)?
         .into_rgb8();
 
-    let final_path = get_cover_output_path(hash, "jpg")?;
-    if final_path.exists() {
-        return Ok(final_path);
-    }
-
+    let name = format!("{hash}.jpg");
+    create_folder(folder)?;
     image::DynamicImage::ImageRgb8(image)
-        .save_with_format(&final_path, ImageFormat::Jpeg)
+        .save_with_format(folder.join(&name), ImageFormat::Jpeg)
         .map_err(|_| CoverImageError::CoverCreationFailed)?;
-    Ok(final_path)
+    Ok(name)
 }
 
-fn get_epub_cover_image(path: &Path, hash: &str) -> Result<PathBuf, CoverImageError> {
+fn epub_cover(folder: &Path, path: &Path, hash: &str) -> Result<String, CoverImageError> {
     let epub = Epub::parse(path).map_err(|_| CoverImageError::FileNotFound)?;
     let cover = epub
         .images
         .first()
         .ok_or(CoverImageError::CoverCreationFailed)?;
-    let image_bytes = &cover.content;
-    let image_type = &cover.media_type;
 
     // Extract extension from media type
-    let extension = image_type
+    let extension = cover
+        .media_type
         .split('/')
         .nth(1)
         .ok_or(CoverImageError::CoverCreationFailed)?;
 
-    let final_path = get_cover_output_path(hash, extension)?;
-    if final_path.exists() {
-        return Ok(final_path);
-    }
-
-    let result = create_image_at_location(&final_path, image_bytes)?;
-    Ok(result)
+    write_cover(folder, hash, extension, &cover.content)
 }
 
-fn get_image_comic_cover_image(path: &Path, hash: &str) -> Result<PathBuf, CoverImageError> {
+/// The cover of an image folder: its page 1, once its first bytes show it is a picture.
+fn folder_cover(folder: &Path, path: &Path, hash: &str) -> Result<String, CoverImageError> {
     let first = book_pages::folder_page(path, 1)?;
+    let mut start = Vec::new();
+    File::open(&first)
+        .and_then(|file| file.take(64).read_to_end(&mut start))
+        .map_err(|_| CoverImageError::FileNotFound)?;
+    let extension = image_extension(&start)?;
 
-    let extension = first
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .unwrap_or("unknown")
-        .to_string();
+    let name = format!("{hash}.{extension}");
+    create_folder(folder)?;
+    fs::copy(&first, folder.join(&name)).map_err(|_| CoverImageError::CoverCreationFailed)?;
+    Ok(name)
+}
 
-    let final_path = get_cover_output_path(hash, &extension)?;
-    if final_path.exists() {
-        return Ok(final_path);
+/// The extension of the picture `data` starts with, by its content, whatever its file is called.
+fn image_extension(data: &[u8]) -> Result<&'static str, CoverImageError> {
+    let format = image::guess_format(data).map_err(|_| CoverImageError::ImageFormatFailed)?;
+    Ok(format.extensions_str().first().copied().unwrap_or("png"))
+}
+
+fn write_cover(
+    folder: &Path,
+    hash: &str,
+    extension: &str,
+    data: &[u8],
+) -> Result<String, CoverImageError> {
+    let name = format!("{hash}.{extension}");
+    create_folder(folder)?;
+    fs::write(folder.join(&name), data).map_err(|_| CoverImageError::CoverCreationFailed)?;
+    Ok(name)
+}
+
+fn create_folder(folder: &Path) -> Result<(), CoverImageError> {
+    fs::create_dir_all(folder).map_err(|_| CoverImageError::GeneralError)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::{encoded_image, TempDir};
+
+    const HASH: &str = "0123abcd";
+
+    fn covers_in(dir: &TempDir) -> Covers {
+        Covers {
+            folder: dir.path().join("covers"),
+            pdfium: None,
+        }
     }
 
-    let result = copy_image_to_cover_location(first.as_path(), final_path.as_path())?;
+    #[test]
+    fn a_cbz_cover_is_its_first_page_named_by_the_hash_in_the_cover_folder() {
+        let books = TempDir::new();
+        let covers = covers_in(&books);
+        let png = encoded_image(ImageFormat::Png, 2, 3);
+        let cbz = books.write_cbz("Berserk v01.cbz", &[("001.png", &png)]);
 
-    Ok(result)
-}
+        let name = cover_for(&covers, &cbz, &BookFormat::Cbz, Some(HASH));
 
-fn create_image_at_location(path: &Path, data: &[u8]) -> Result<PathBuf, CoverImageError> {
-    fs::write(path, data).map_err(|_| CoverImageError::CoverCreationFailed)?;
-    Ok(path.to_path_buf())
-}
+        assert_eq!(name.as_deref(), Some("0123abcd.png"));
+        assert_eq!(fs::read(covers.path_of("0123abcd.png")).unwrap(), png);
+    }
 
-fn copy_image_to_cover_location(
-    original_image: &Path,
-    final_file: &Path,
-) -> Result<PathBuf, CoverImageError> {
-    std::fs::copy(original_image, final_file).map_err(|_| CoverImageError::CoverCreationFailed)?;
-    Ok(final_file.to_path_buf())
-}
+    #[test]
+    fn a_folder_cover_is_named_by_what_its_first_page_holds_not_by_its_file_name() {
+        let books = TempDir::new();
+        let covers = covers_in(&books);
+        let png = encoded_image(ImageFormat::Png, 2, 3);
+        books.write("Pluto/001.jpg", &png);
+        books.write("Pluto/002.jpg", &encoded_image(ImageFormat::Jpeg, 2, 3));
 
-fn get_cover_output_path(hash: &str, extension: &str) -> Result<PathBuf, CoverImageError> {
-    fs::create_dir_all(COVER_DIR).map_err(|_| CoverImageError::GeneralError)?;
+        let name = cover_for(
+            &covers,
+            &books.path().join("Pluto"),
+            &BookFormat::ImageComic,
+            Some(HASH),
+        );
 
-    let final_file = Path::new(COVER_DIR).join(hash).with_extension(extension);
-    Ok(final_file)
+        assert_eq!(name.as_deref(), Some("0123abcd.png"));
+        assert_eq!(fs::read(covers.path_of("0123abcd.png")).unwrap(), png);
+    }
+
+    #[test]
+    fn a_first_page_that_is_no_picture_gives_no_cover() {
+        let books = TempDir::new();
+        let covers = covers_in(&books);
+        books.write("Pluto/001.jpg", b"not a picture");
+        let cbz = books.write_cbz("Monster v01.cbz", &[("001.jpg", b"not a picture")]);
+
+        for (path, format) in [
+            (books.path().join("Pluto"), BookFormat::ImageComic),
+            (cbz, BookFormat::Cbz),
+        ] {
+            assert_eq!(cover_for(&covers, &path, &format, Some(HASH)), None);
+        }
+        assert!(!covers.folder.exists(), "nothing is written");
+    }
+
+    #[test]
+    fn an_existing_cover_is_found_before_anything_is_read_or_written() {
+        let books = TempDir::new();
+        let covers = covers_in(&books);
+        fs::create_dir_all(&covers.folder).unwrap();
+        fs::write(covers.path_of("0123abcd.jpg"), b"extracted before").unwrap();
+        // The archive is gone, so reading it would fail: the cover can only come from the folder.
+        let gone = books.path().join("gone.cbz");
+
+        let name = cover_for(&covers, &gone, &BookFormat::Cbz, Some(HASH));
+
+        assert_eq!(name.as_deref(), Some("0123abcd.jpg"));
+        assert_eq!(
+            fs::read(covers.path_of("0123abcd.jpg")).unwrap(),
+            b"extracted before"
+        );
+    }
+
+    #[test]
+    fn without_a_hash_there_is_no_cover_and_no_file_beside_the_folder() {
+        let books = TempDir::new();
+        let covers = covers_in(&books);
+        let png = encoded_image(ImageFormat::Png, 2, 3);
+        let cbz = books.write_cbz("Berserk v01.cbz", &[("001.png", &png)]);
+
+        for hash in [None, Some("")] {
+            assert_eq!(cover_for(&covers, &cbz, &BookFormat::Cbz, hash), None);
+        }
+        assert!(!covers.folder.exists());
+        assert!(!books.path().join("covers.png").exists());
+    }
+
+    #[test]
+    fn a_pdf_without_pdfium_gets_no_cover() {
+        let books = TempDir::new();
+        let covers = covers_in(&books);
+        let pdf = books.write("Berserk v01.pdf", b"%PDF-1.7 tiny");
+
+        assert_eq!(cover_for(&covers, &pdf, &BookFormat::Pdf, Some(HASH)), None);
+        assert!(!covers.folder.exists());
+    }
 }

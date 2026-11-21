@@ -27,6 +27,7 @@ use crate::{
         covers::{self, CoverKind},
         library_management, reading_modes,
     },
+    scanner::cover_image_retriever::Covers,
     stream_reader::serve_file,
 };
 
@@ -213,21 +214,23 @@ pub async fn set_reading_mode(
 pub async fn get_cover(
     _session: AuthSession,
     State(db): State<Arc<Database>>,
+    State(cover_files): State<Covers>,
     PathParams((kind, id)): PathParams<(CoverKind, i64)>,
     request: Request<Body>,
 ) -> Result<Response<Body>, AppErrors> {
-    let path = covers::cover_path(db, kind, id)
+    let name = covers::cover_path(db, kind, id)
         .await?
         .ok_or(DatabaseError::EntryNotFound)?;
-    Ok(serve_file(Path::new(&path), request).await)
+    Ok(serve_file(&cover_files.path_of(&name), request).await)
 }
 
 /// Kick off a scan of every configured book directory.
 pub async fn scan_all_directories(
     _admin: AdminSession,
     State(db): State<Arc<Database>>,
+    State(covers): State<Covers>,
 ) -> Response<Body> {
-    match scan_all_folders(db).await {
+    match scan_all_folders(db, covers).await {
         Ok(()) => (StatusCode::OK, "Directory scan complete").into_response(),
         Err(error) => {
             tracing::error!("directory scan failed: {error:#}");

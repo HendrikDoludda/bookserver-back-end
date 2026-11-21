@@ -7,9 +7,9 @@ covers stored outside the app so updates and containers keep them.
 [Desktop auto-update](25-desktop-auto-update.md) builds on the installers.
 
 ## Build
-- [ ] ? h · One configurable data location, per the data-directory decision: the database path is hard-coded in `Database::new` and `COVER_DIR` is `./cover_images/` — both relative to the working directory [BE]
+- [ ] ? h · One configurable data location, per the data-directory decision: the database path is hard-coded in `Database::new` and the cover folder (`Covers`) in `main.rs` — both relative to the working directory [BE]
 - [ ] ? h · Replace the placeholder `ProjectDirs` identifier (`"placeholder_organization"`) in `set_up_config_file` with the app's permanent identifier, per the identifier decision, before the first release — changing it later moves the config directory, and existing installs lose `secrets.toml` — and with it every stored TOTP secret ([04](04-two-factor-auth-totp.md)) [BE]
-- [ ] ? h · Ship the PDFium library with every build and bind it by path (`Pdfium::bind_to_library`) — `Pdfium::default()` looks in the working directory, which is `/` for an app started from Finder (TODO in `cover_image_retriever.rs`) [BE]
+- [ ] ? h · Ship the PDFium library with every build and bind it by path (`Pdfium::bind_to_library`) — `bind_pdfium` looks in the working directory, which is `/` for an app started from Finder, and then on the system's library path [BE]
 - [ ] ? h · Graceful shutdown: `axum::serve` gets `.with_graceful_shutdown(signal)`, fired by `SIGTERM` and Ctrl-C, so in-flight requests finish and pooled SQLite connections close — `docker stop` sends `SIGTERM` and kills the process 10 seconds later; the tray's "Quit" ([77](77-tray-app.md)) and the updater's restart ([25](25-desktop-auto-update.md)) fire it too [BE]
 - [ ] 3 h · Serve HTTPS without `tailscale serve` ([32](32-https-tls.md)) through `axum-server` 0.9 (feature `tls-rustls`): `RustlsConfig::from_pem_file(cert, key)` and `bind_rustls`, with a certificate per the LAN-HTTPS question [BE]
 - [ ] 1 h · Settings for the certificate and key paths [BE]

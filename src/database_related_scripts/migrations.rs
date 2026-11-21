@@ -30,6 +30,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "books_series_foreign_key",
         sql: include_str!("../../migrations/0003_books_series_foreign_key.sql"),
     },
+    Migration {
+        version: 4,
+        name: "cover_file_names",
+        sql: include_str!("../../migrations/0004_cover_file_names.sql"),
+    },
 ];
 
 // Apply every migration that has not yet been recorded in `schema_migrations`.
@@ -806,6 +811,75 @@ mod tests {
             .query_row("PRAGMA foreign_keys", [], |row| row.get(0))
             .unwrap();
         assert_eq!(foreign_keys, 1, "the migration leaves foreign keys on");
+    }
+
+    #[test]
+    fn a_database_of_the_third_schema_keeps_cover_file_names_and_loses_the_shared_broken_one() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        configure(&conn).unwrap();
+        // As a server of the third schema left it.
+        for migration in &MIGRATIONS[..3] {
+            conn.execute_batch(migration.sql).unwrap();
+        }
+        conn.execute_batch(
+            "CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, \
+             applied_at INTEGER NOT NULL); \
+             INSERT INTO schema_migrations (version, applied_at) VALUES (1, 0), (2, 0), (3, 0);",
+        )
+        .unwrap();
+        let book = |path: &str, cover: Option<&str>| {
+            conn.execute(
+                "INSERT INTO books (title, author, format, language, tags, file_path, \
+                 cover_image) VALUES ('t', 'a', 'cbz', 'ja', '', ?1, ?2)",
+                params![path, cover],
+            )
+            .unwrap();
+        };
+        book("/books/a.cbz", Some("./cover_images/abc.jpg"));
+        book("/books/b.cbz", Some("./cover_images.jpg"));
+        book("/books/c.cbz", Some("./cover_images.png"));
+        book("/books/d.cbz", None);
+        book("/books/e.cbz", Some("def.png"));
+        conn.execute(
+            "INSERT INTO series (name, cover_image) VALUES ('s', './cover_images/s.webp')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO library (library_name, library_type, cover_image) \
+             VALUES ('l', 'books', './cover_images/l.gif')",
+            [],
+        )
+        .unwrap();
+
+        run(&mut conn).unwrap();
+
+        let covers = |sql: &str| -> Vec<Option<String>> {
+            conn.prepare(sql)
+                .unwrap()
+                .query_map([], |row| row.get(0))
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap()
+        };
+        assert_eq!(
+            covers("SELECT cover_image FROM books ORDER BY file_path"),
+            [
+                Some("abc.jpg".to_string()),
+                None,
+                None,
+                None,
+                Some("def.png".to_string())
+            ]
+        );
+        assert_eq!(
+            covers("SELECT cover_image FROM series"),
+            [Some("s.webp".to_string())]
+        );
+        assert_eq!(
+            covers("SELECT cover_image FROM library"),
+            [Some("l.gif".to_string())]
+        );
     }
 
     #[test]

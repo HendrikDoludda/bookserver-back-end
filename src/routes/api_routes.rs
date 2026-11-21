@@ -1145,13 +1145,11 @@ mod tests {
     #[tokio::test]
     async fn a_cover_comes_from_its_own_row_or_else_from_the_first_book_in_reading_order() {
         let temp = TempDatabase::open();
-        let files = TempDir::new();
-        // Each file holds its own name, so a body shows which cover was served.
+        // Each file holds its own name, so a body shows which cover was served. Rows name a file
+        // in the cover folder.
         let cover = |name: &str| {
-            files
-                .write(name, name.as_bytes())
-                .to_string_lossy()
-                .into_owned()
+            temp.covers.write(name, name.as_bytes());
+            name.to_string()
         };
         let [extra, two, three, zeta_own, zeta_book, library_own] = [
             "extra.png",
@@ -1240,8 +1238,8 @@ mod tests {
     #[tokio::test]
     async fn a_cover_that_is_not_there_answers_404_json_and_an_unknown_kind_400_json() {
         let temp = TempDatabase::open();
-        let files = TempDir::new();
-        let gone = files.path().join("gone.png").to_string_lossy().into_owned();
+        // A name in the cover folder whose file isn't there.
+        let gone = "gone.png".to_string();
         let (coverless_book, gone_book, empty_series, empty_library) = temp
             .db
             .setup_new_transaction(move |conn| {

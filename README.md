@@ -92,8 +92,9 @@ A few design choices worth calling out:
 
 - A recent stable Rust toolchain (developed on Rust 1.96).
 - For PDF covers only: the PDFium shared library (`libpdfium.dylib`, `libpdfium.so` or
-  `pdfium.dll`) in the working directory or on the system library path. Prebuilt binaries
-  are available from [bblanchon/pdfium-binaries](https://github.com/bblanchon/pdfium-binaries).
+  `pdfium.dll`) in the working directory or on the system library path; without it, PDFs are
+  listed without covers. Prebuilt binaries are available from
+  [bblanchon/pdfium-binaries](https://github.com/bblanchon/pdfium-binaries).
 
 **Run**
 

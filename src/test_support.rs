@@ -24,6 +24,7 @@ use crate::{
         registration::SetupCode,
         totp_cipher::TotpCipher,
     },
+    scanner::cover_image_retriever::Covers,
 };
 
 /// The setup code of every test router; first sign-ups in tests send it.
@@ -167,6 +168,8 @@ pub fn unreachable_mailer() -> Mailer {
 /// `:memory:` path won't do: every pooled connection would get its own empty database.
 pub struct TempDatabase {
     pub db: Arc<Database>,
+    /// The cover folder of [`TempDatabase::state`], empty until something is written into it.
+    pub covers: TempDir,
     // Fields drop in declaration order, so the pool closes before the file is deleted.
     _file: TempFile,
 }
@@ -177,6 +180,7 @@ impl TempDatabase {
         let db = Database::open(&path).expect("open a temp-file database");
         Self {
             db: Arc::new(db),
+            covers: TempDir::new(),
             _file: TempFile(path),
         }
     }
@@ -185,14 +189,18 @@ impl TempDatabase {
         &self._file.0
     }
 
-    /// Router state on this database, with the given mailer, `TEST_SETUP_CODE` and
-    /// `test_cipher()`.
+    /// Router state on this database, with the given mailer, `TEST_SETUP_CODE`,
+    /// `test_cipher()`, and [`TempDatabase::covers`] as the cover folder, without PDFium.
     pub fn state(&self, mailer: Mailer) -> AppState {
         AppState {
             db: Arc::clone(&self.db),
             mailer,
             setup_code: SetupCode::of(TEST_SETUP_CODE),
             totp_cipher: test_cipher(),
+            covers: Covers {
+                folder: self.covers.path().to_path_buf(),
+                pdfium: None,
+            },
         }
     }
 }
