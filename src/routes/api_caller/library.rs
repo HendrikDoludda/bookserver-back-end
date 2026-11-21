@@ -16,8 +16,8 @@ use axum::{
 use crate::{
     book_pages::{self, PageContent},
     data_models::books_model::{
-        BookDetails, BookSummary, LibrarySummary, PageSummary, ReadingModeChange,
-        ReadingModeSetting, SeriesSummary,
+        BookDetails, BookSummary, LibraryChanges, LibrarySummary, NewLibrary, PageSummary,
+        ReadingModeChange, ReadingModeSetting, SeriesListing, SeriesSummary,
     },
     db::Database,
     error_types::{internal_error_response, AppErrors, DatabaseError, PageError},
@@ -25,7 +25,7 @@ use crate::{
     models::{BookMetadata, BookSeriesMetadata, DatabaseTypes, LibraryMetadata, WithId},
     routes::{
         covers::{self, CoverKind},
-        reading_modes,
+        library_management, reading_modes,
     },
     stream_reader::serve_file,
 };
@@ -234,6 +234,59 @@ pub async fn scan_all_directories(
             internal_error_response()
         }
     }
+}
+
+/// `POST /api/v1/libraries` with `{"name", "library_type", "description"?}`: answers 201 and the
+/// new library.
+pub async fn add_library(
+    _admin: AdminSession,
+    State(db): State<Arc<Database>>,
+    JsonBody(new): JsonBody<NewLibrary>,
+) -> Result<(StatusCode, Json<WithId<LibrarySummary>>), AppErrors> {
+    let library = library_management::create_library(db, new).await?;
+    Ok((StatusCode::CREATED, Json(library)))
+}
+
+/// `PATCH /api/v1/libraries/{id}` with `{"name"?, "library_type"?, "description"?}`: answers the
+/// changed library.
+pub async fn update_library(
+    _admin: AdminSession,
+    State(db): State<Arc<Database>>,
+    PathParams(id): PathParams<i64>,
+    JsonBody(changes): JsonBody<LibraryChanges>,
+) -> Result<Json<WithId<LibrarySummary>>, AppErrors> {
+    Ok(Json(
+        library_management::change_library(db, id, changes).await?,
+    ))
+}
+
+/// `GET /api/v1/series`: every series by name, to choose a library's series from.
+pub async fn list_series(
+    _admin: AdminSession,
+    State(db): State<Arc<Database>>,
+) -> Result<Json<Vec<WithId<SeriesListing>>>, AppErrors> {
+    Ok(Json(library_management::all_series(db).await?))
+}
+
+/// `PUT /api/v1/libraries/{id}/series/{series_id}`: the library holds the series.
+pub async fn add_series_to_library(
+    _admin: AdminSession,
+    State(db): State<Arc<Database>>,
+    PathParams((library_id, series_id)): PathParams<(i64, i64)>,
+) -> Result<StatusCode, AppErrors> {
+    library_management::add_series(db, library_id, series_id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// `DELETE /api/v1/libraries/{id}/series/{series_id}`: the library no longer holds the series;
+/// the series and its books stay.
+pub async fn remove_series_from_library(
+    _admin: AdminSession,
+    State(db): State<Arc<Database>>,
+    PathParams((library_id, series_id)): PathParams<(i64, i64)>,
+) -> Result<StatusCode, AppErrors> {
+    library_management::remove_series(db, library_id, series_id).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Delete a library row by id; 404 when no library has it.

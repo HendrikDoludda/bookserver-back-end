@@ -18,9 +18,10 @@ use crate::{
         },
         helpers::{method_not_allowed, not_found, not_implemented, ping_server},
         library::{
-            delete_library, get_cover, get_libraries, get_page, get_pages, get_series_children,
-            get_series_in_library, request_file, retrieve_metadata, scan_all_directories,
-            set_reading_mode,
+            add_library, add_series_to_library, delete_library, get_cover, get_libraries, get_page,
+            get_pages, get_series_children, get_series_in_library, list_series,
+            remove_series_from_library, request_file, retrieve_metadata, scan_all_directories,
+            set_reading_mode, update_library,
         },
         locales::{get_translations, list_locales},
         settings::{get_settings, replace_settings},
@@ -52,12 +53,17 @@ pub async fn start_server(state: AppState, address: SocketAddr) -> Result<(), Ro
 /// Routes mapped to `not_implemented` are placeholders whose handlers don't exist yet.
 pub fn set_up_routes() -> Router<AppState> {
     let api = Router::new()
-        .route("/libraries", get(get_libraries).post(not_implemented))
+        .route("/libraries", get(get_libraries).post(add_library))
         .route(
             "/libraries/{id}",
-            delete(delete_library).patch(not_implemented),
+            delete(delete_library).patch(update_library),
         )
         .route("/libraries/{id}/series", get(get_series_in_library))
+        .route(
+            "/libraries/{id}/series/{series_id}",
+            put(add_series_to_library).delete(remove_series_from_library),
+        )
+        .route("/series", get(list_series))
         .route("/series/{id}/books", get(get_series_children))
         .route("/series/{id}/reading_mode", put(set_reading_mode))
         .route("/books/{id}", get(retrieve_metadata))
@@ -288,8 +294,6 @@ mod tests {
         let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
 
         for (method, uri) in [
-            ("POST", "/api/v1/libraries"),
-            ("PATCH", "/api/v1/libraries/1"),
             ("GET", "/api/v1/books/1/progress"),
             ("PATCH", "/api/v1/books/1/progress"),
             ("GET", "/api/v1/scan/status"),
@@ -437,6 +441,217 @@ mod tests {
             assert!(row.get("cover_image").is_none(), "{uri}: {row}");
             assert!(!row.to_string().contains("/srv/covers"), "{uri}: {row}");
         }
+    }
+
+    /// A series with plain SQL, as the scanner leaves one; answers its id.
+    fn scanned_series(temp: &TempDatabase, name: &str) -> i64 {
+        temp.db
+            .setup_new_transaction(|conn| {
+                conn.execute("INSERT INTO series (name) VALUES (?1)", [name])
+                    .unwrap();
+                Ok(conn.last_insert_rowid())
+            })
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn an_admin_creates_a_library_edits_it_and_chooses_its_series() {
+        let temp = TempDatabase::open();
+        let admin = logged_in(&temp, "alice", "admin");
+        let berserk = scanned_series(&temp, "berserk");
+        let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
+
+        let body = serde_json::json!({
+            "name": " Favourites ",
+            "library_type": "comics",
+            "description": "Picked by hand",
+        });
+        let (status, _, created) = call(
+            &app,
+            authorized("POST", "/api/v1/libraries", &admin, Some(body)),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+        let library = json(&created)["id"].as_i64().unwrap();
+        assert_eq!(
+            json(&created),
+            serde_json::json!({
+                "id": library,
+                "name": "Favourites",
+                "library_type": "comics",
+                "description": "Picked by hand",
+                "series_count": 0,
+            })
+        );
+
+        let uri = format!("/api/v1/libraries/{library}");
+        let body = serde_json::json!({ "library_type": "books", "description": null });
+        let (status, _, changed) = call(&app, authorized("PATCH", &uri, &admin, Some(body))).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            json(&changed),
+            serde_json::json!({
+                "id": library,
+                "name": "Favourites",
+                "library_type": "books",
+                "description": null,
+                "series_count": 0,
+            })
+        );
+
+        let membership = format!("/api/v1/libraries/{library}/series/{berserk}");
+        for _ in 0..2 {
+            let (status, _, body) = call(&app, authorized("PUT", &membership, &admin, None)).await;
+            assert_eq!(status, StatusCode::NO_CONTENT);
+            assert!(body.is_empty());
+        }
+        let (status, _, listed) =
+            call(&app, authorized("GET", "/api/v1/series", &admin, None)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            json(&listed),
+            serde_json::json!([{
+                "id": berserk,
+                "name": "berserk",
+                "description": null,
+                "start_release_year": null,
+                "end_release_year": null,
+                "book_count": 0,
+                "library_ids": [library],
+            }])
+        );
+        let (_, _, in_library) = call(
+            &app,
+            authorized("GET", &format!("{uri}/series"), &admin, None),
+        )
+        .await;
+        assert_eq!(json(&in_library)[0]["id"], berserk);
+
+        let (status, _, _) = call(&app, authorized("DELETE", &membership, &admin, None)).await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        let (_, _, listed) = call(&app, authorized("GET", "/api/v1/series", &admin, None)).await;
+        assert_eq!(json(&listed)[0]["library_ids"], serde_json::json!([]));
+    }
+
+    #[tokio::test]
+    async fn a_library_with_an_unknown_type_a_blank_name_or_no_change_is_refused() {
+        let temp = TempDatabase::open();
+        let admin = logged_in(&temp, "alice", "admin");
+        let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
+        let create =
+            |body: serde_json::Value| authorized("POST", "/api/v1/libraries", &admin, Some(body));
+
+        let (status, _, body) = call(
+            &app,
+            create(serde_json::json!({ "name": "Novels", "library_type": "novels" })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(
+            json(&body),
+            serde_json::json!({ "error": "invalid_request" })
+        );
+
+        let (status, _, body) = call(
+            &app,
+            create(serde_json::json!({ "name": "  ", "library_type": "books" })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(json(&body), serde_json::json!({ "error": "invalid_name" }));
+
+        let (_, _, created) = call(
+            &app,
+            create(serde_json::json!({ "name": "Manga", "library_type": "comics" })),
+        )
+        .await;
+        let library = json(&created)["id"].as_i64().unwrap();
+        let (status, _, body) = call(
+            &app,
+            authorized(
+                "PATCH",
+                &format!("/api/v1/libraries/{library}"),
+                &admin,
+                Some(serde_json::json!({})),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(
+            json(&body),
+            serde_json::json!({ "error": "invalid_request" })
+        );
+
+        for (method, uri) in [
+            ("PATCH", format!("/api/v1/libraries/{}", library + 1)),
+            ("PUT", format!("/api/v1/libraries/{library}/series/999")),
+        ] {
+            let body = (method == "PATCH").then(|| serde_json::json!({ "name": "Comics" }));
+            let (status, _, answer) = call(&app, authorized(method, &uri, &admin, body)).await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{method} {uri}");
+            assert_eq!(json(&answer), serde_json::json!({ "error": "not_found" }));
+        }
+    }
+
+    #[tokio::test]
+    async fn only_an_admin_creates_or_changes_libraries_and_lists_every_series() {
+        let temp = TempDatabase::open();
+        let member = logged_in(&temp, "bob", "member");
+        let berserk = scanned_series(&temp, "berserk");
+        let library = temp
+            .db
+            .setup_new_transaction(|conn| {
+                conn.execute(
+                    "INSERT INTO library (library_name, library_type) VALUES ('manga', 'comics')",
+                    [],
+                )
+                .unwrap();
+                Ok(conn.last_insert_rowid())
+            })
+            .unwrap();
+        let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
+        let membership = format!("/api/v1/libraries/{library}/series/{berserk}");
+
+        for (method, uri, body) in [
+            (
+                "POST",
+                "/api/v1/libraries".to_string(),
+                Some(serde_json::json!({ "name": "Mine", "library_type": "books" })),
+            ),
+            (
+                "PATCH",
+                format!("/api/v1/libraries/{library}"),
+                Some(serde_json::json!({ "name": "Mine" })),
+            ),
+            ("GET", "/api/v1/series".to_string(), None),
+            ("PUT", membership.clone(), None),
+            ("DELETE", membership.clone(), None),
+        ] {
+            let (status, _, answer) = call(&app, authorized(method, &uri, &member, body)).await;
+            assert_eq!(status, StatusCode::FORBIDDEN, "{method} {uri}");
+            assert_eq!(json(&answer), serde_json::json!({ "error": "forbidden" }));
+        }
+
+        let (names, links): (Vec<String>, i64) = temp
+            .db
+            .setup_new_transaction(|conn| {
+                let names = conn
+                    .prepare("SELECT library_name FROM library")
+                    .unwrap()
+                    .query_map([], |row| row.get(0))
+                    .unwrap()
+                    .collect::<Result<_, _>>()
+                    .unwrap();
+                let links = conn
+                    .query_row("SELECT COUNT(*) FROM library_elements", [], |row| {
+                        row.get(0)
+                    })
+                    .unwrap();
+                Ok((names, links))
+            })
+            .unwrap();
+        assert_eq!(names, ["manga"], "a member creates and renames nothing");
+        assert_eq!(links, 0, "a member links nothing");
     }
 
     #[tokio::test]
@@ -1860,6 +2075,9 @@ mod tests {
         ("PATCH", "/api/v1/libraries/1"),
         ("DELETE", "/api/v1/libraries/1"),
         ("GET", "/api/v1/libraries/1/series"),
+        ("PUT", "/api/v1/libraries/1/series/1"),
+        ("DELETE", "/api/v1/libraries/1/series/1"),
+        ("GET", "/api/v1/series"),
         ("GET", "/api/v1/series/1/books"),
         ("PUT", "/api/v1/series/1/reading_mode"),
         ("GET", "/api/v1/books/1"),

@@ -462,6 +462,7 @@ mod tests {
             Err(AppErrors::Translation(_)) => "translation error",
             Err(AppErrors::Pages(_)) => "pages error",
             Err(AppErrors::ReadingMode(_)) => "reading mode error",
+            Err(AppErrors::Library(_)) => "library error",
             Err(AppErrors::Database(_)) => "database error",
             Err(AppErrors::InvalidRequest) => "invalid request",
         }

@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::{
     db::checked_unix_time,
@@ -47,6 +47,43 @@ impl SeriesSummary {
             book_count,
         }
     }
+}
+
+/// One series as `GET /api/v1/series` lists it: its summary, and the libraries it is in.
+#[derive(Debug, Serialize)]
+pub struct SeriesListing {
+    #[serde(flatten)]
+    pub series: SeriesSummary,
+    pub library_ids: Vec<i64>,
+}
+
+/// `POST /api/v1/libraries`.
+#[derive(Debug, Deserialize)]
+pub struct NewLibrary {
+    pub name: String,
+    pub library_type: LibraryType,
+    pub description: Option<String>,
+}
+
+/// `PATCH /api/v1/libraries/{id}`: a field left out stays as it is, and `"description": null`
+/// clears the description.
+#[derive(Debug, Deserialize)]
+pub struct LibraryChanges {
+    pub name: Option<String>,
+    pub library_type: Option<LibraryType>,
+    #[serde(default, deserialize_with = "present")]
+    pub description: Option<Option<String>>,
+}
+
+/// Reads a PATCH field that can be cleared, together with `#[serde(default)]`: left out is
+/// `None`, `null` is `Some(None)`, a value is `Some(Some(value))`.
+// A plain `Option` reads a left-out field and `null` alike, so nothing could be cleared.
+fn present<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    T::deserialize(deserializer).map(Some)
 }
 
 /// One book as the app gets it — never the server's file path, the file's hash or the cover's
@@ -200,5 +237,36 @@ mod tests {
             ..scanned_book()
         });
         assert_eq!(summary.last_modified, None);
+    }
+
+    fn library_changes(body: serde_json::Value) -> LibraryChanges {
+        serde_json::from_value(body).unwrap()
+    }
+
+    #[test]
+    fn a_library_change_tells_a_left_out_description_from_a_cleared_one() {
+        let left_out = library_changes(serde_json::json!({ "name": "Manga" }));
+        assert_eq!(left_out.description, None);
+        assert_eq!(left_out.name.as_deref(), Some("Manga"));
+
+        let cleared = library_changes(serde_json::json!({ "description": null }));
+        assert_eq!(cleared.description, Some(None));
+
+        let written = library_changes(serde_json::json!({ "description": "Japanese comics" }));
+        assert_eq!(
+            written.description,
+            Some(Some("Japanese comics".to_string()))
+        );
+    }
+
+    #[test]
+    fn a_library_change_reads_the_type_by_its_stored_name_only() {
+        let changes = library_changes(serde_json::json!({ "library_type": "comics" }));
+        assert_eq!(changes.library_type, Some(LibraryType::Comics));
+
+        let unknown = serde_json::from_value::<LibraryChanges>(
+            serde_json::json!({ "library_type": "novels" }),
+        );
+        assert!(unknown.is_err());
     }
 }

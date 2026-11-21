@@ -5,6 +5,7 @@ pub mod auth;
 pub mod covers;
 pub mod email_codes;
 pub mod email_helper;
+pub mod library_management;
 pub mod login;
 pub mod password_reset;
 pub mod reading_modes;

@@ -128,14 +128,19 @@ A bad or incomplete setting stops the server at start, naming it.
 ## API
 
 Every endpoint except `/health`, `/api/v1/auth/…` and the two `/api/v1/locales…` reads needs
-`Authorization: Bearer <session_token>` and answers 401 without it; scanning and deleting a library also need an admin
-(403 for a member). Implemented endpoints:
+`Authorization: Bearer <session_token>` and answers 401 without it; scanning, `GET /api/v1/series` and every change to a
+library also need an admin (403 for a member). Implemented endpoints:
 
 | Method | Path | Description |
 | --- | --- | --- |
 | `GET` | `/health` | Liveness check |
 | `GET` | `/api/v1/libraries` | All libraries |
 | `GET` | `/api/v1/libraries/{id}/series` | Series in a library |
+| `POST` | `/api/v1/libraries` | Create a library from `{"name", "library_type", "description"?}` — the type is `books`, `comics`, `magazines`, `documents` or `others`, the name is trimmed and 1–200 characters (`400 invalid_name`); answers `201` and the library |
+| `PATCH` | `/api/v1/libraries/{id}` | Change a library's `name`, `library_type` or `description`; a field left out stays, `"description": null` clears it; answers the library |
+| `PUT` | `/api/v1/libraries/{id}/series/{series_id}` | Put a series into a library; `204`, also when it was there already |
+| `DELETE` | `/api/v1/libraries/{id}/series/{series_id}` | Take a series out of a library — the series and its books stay; `204` |
+| `GET` | `/api/v1/series` | Every series by name, with its `book_count` and the `library_ids` it is in |
 | `GET` | `/api/v1/series/{id}/books` | Books in a series |
 | `GET` | `/api/v1/books/{id}` | One book's metadata |
 | `GET` | `/api/v1/books/{id}/file` | Stream the book file (supports `Range`) |

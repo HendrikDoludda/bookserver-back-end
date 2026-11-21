@@ -400,6 +400,21 @@ impl ReadingModeError {
     }
 }
 
+/// Changes an admin makes to libraries and series.
+#[derive(Error, Debug)]
+pub enum LibraryError {
+    #[error("The name is empty or longer than 200 characters")]
+    InvalidName,
+}
+
+impl LibraryError {
+    fn status_and_key(&self) -> (StatusCode, &'static str) {
+        match self {
+            LibraryError::InvalidName => (StatusCode::BAD_REQUEST, "invalid_name"),
+        }
+    }
+}
+
 /// A shipped translation file that breaks a rule: the server doesn't start with one. `file` is
 /// the path under `translations/`, `key` the dotted name inside the file.
 #[derive(Debug, Error, PartialEq)]
@@ -471,6 +486,8 @@ pub enum AppErrors {
     Pages(#[from] PageError),
     #[error(transparent)]
     ReadingMode(#[from] ReadingModeError),
+    #[error(transparent)]
+    Library(#[from] LibraryError),
     #[error("The request's body, path or query could not be read")]
     InvalidRequest,
 }
@@ -485,6 +502,7 @@ impl AppErrors {
             AppErrors::Translation(err) => err.status_and_key(),
             AppErrors::Pages(err) => err.status_and_key(),
             AppErrors::ReadingMode(err) => err.status_and_key(),
+            AppErrors::Library(err) => err.status_and_key(),
             AppErrors::InvalidRequest => (StatusCode::BAD_REQUEST, "invalid_request"),
         }
     }
@@ -677,6 +695,11 @@ mod tests {
                 ReadingModeError::InvalidReadingMode.into(),
                 StatusCode::BAD_REQUEST,
                 "invalid_reading_mode",
+            ),
+            (
+                LibraryError::InvalidName.into(),
+                StatusCode::BAD_REQUEST,
+                "invalid_name",
             ),
             (
                 DatabaseError::EntryNotFound.into(),

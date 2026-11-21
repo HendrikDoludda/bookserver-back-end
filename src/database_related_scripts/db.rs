@@ -512,6 +512,92 @@ impl Database {
         )
     }
 
+    /// How many books each series holds, by series id; a series without books is absent.
+    pub fn count_books_per_series_with_connection(
+        conn: &Connection,
+    ) -> Result<HashMap<i64, i64>, DatabaseError> {
+        counts_by_id(
+            conn,
+            "SELECT series, COUNT(*) FROM books WHERE series IS NOT NULL GROUP BY series",
+            rusqlite::params![],
+            "books",
+        )
+    }
+
+    /// The ids of every series, by name.
+    pub fn all_series_ids_by_name_with_connection(
+        conn: &Connection,
+    ) -> Result<Vec<i64>, DatabaseError> {
+        let mut stmt = conn
+            .prepare("SELECT id FROM series ORDER BY name COLLATE NOCASE, id")
+            .map_err(logged(
+                "reading",
+                "series",
+                DatabaseError::TaskPreparationFailure,
+            ))?;
+        let rows = stmt
+            .query_map([], |row| row.get::<_, i64>(0))
+            .map_err(logged("reading", "series", DatabaseError::QueryFailure))?;
+        rows.collect::<Result<Vec<i64>, _>>().map_err(logged(
+            "reading",
+            "series",
+            DatabaseError::NextRowFailure,
+        ))
+    }
+
+    /// The libraries each series is in, by series id, each list by library id; a series in no
+    /// library is absent.
+    pub fn libraries_per_series_with_connection(
+        conn: &Connection,
+    ) -> Result<HashMap<i64, Vec<i64>>, DatabaseError> {
+        let mut stmt = conn
+            .prepare(
+                "SELECT series_id, library_id FROM library_elements \
+                 ORDER BY series_id, library_id",
+            )
+            .map_err(logged(
+                "reading",
+                "library_elements",
+                DatabaseError::TaskPreparationFailure,
+            ))?;
+        let rows = stmt
+            .query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)))
+            .map_err(logged(
+                "reading",
+                "library_elements",
+                DatabaseError::QueryFailure,
+            ))?;
+        let mut libraries: HashMap<i64, Vec<i64>> = HashMap::new();
+        for pair in rows {
+            let (series_id, library_id) = pair.map_err(logged(
+                "reading",
+                "library_elements",
+                DatabaseError::NextRowFailure,
+            ))?;
+            libraries.entry(series_id).or_default().push(library_id);
+        }
+        Ok(libraries)
+    }
+
+    /// Whether the library holds the series.
+    pub fn library_holds_series_with_connection(
+        conn: &Connection,
+        library_id: i64,
+        series_id: i64,
+    ) -> Result<bool, DatabaseError> {
+        conn.query_row(
+            "SELECT EXISTS (SELECT 1 FROM library_elements \
+             WHERE library_id = ?1 AND series_id = ?2)",
+            [library_id, series_id],
+            |row| row.get(0),
+        )
+        .map_err(logged(
+            "reading",
+            "library_elements",
+            DatabaseError::QueryFailure,
+        ))
+    }
+
     /// Looks up a row id by a single column value.
     /// Legacy: new code should not use this; it remains for the folder scanner.
     pub fn get_id_from_table(
@@ -1018,6 +1104,87 @@ mod tests {
 
         assert_eq!(counts, HashMap::from([(alpha, 3), (beta, 1)]));
         assert_eq!(counts.get(&empty), None, "a series without books is absent");
+    }
+
+    #[test]
+    fn every_series_comes_by_name_ignoring_case() {
+        let conn = memory_connection();
+        let zeta = insert_series(&conn, "zeta");
+        let beta = insert_series(&conn, "Beta");
+        let alpha = insert_series(&conn, "alpha");
+
+        let ids = Database::all_series_ids_by_name_with_connection(&conn).unwrap();
+
+        // A plain byte order would put "Beta" first.
+        assert_eq!(ids, [alpha, beta, zeta]);
+    }
+
+    #[test]
+    fn each_series_counts_its_books_in_every_library() {
+        let conn = memory_connection();
+        let manga = insert_library(&conn, "manga");
+        let alpha = insert_series(&conn, "alpha");
+        let unlinked = insert_series(&conn, "unlinked");
+        let empty = insert_series(&conn, "empty");
+        link(&conn, manga, alpha);
+        for volume in 1..=2 {
+            insert_book(&conn, alpha, "Alpha", Some(volume), None);
+        }
+        insert_book(&conn, unlinked, "Unlinked", Some(1), None);
+        conn.execute(
+            "INSERT INTO books (title, author, format, language, tags, file_path) \
+             VALUES ('Loose', 'Unknown Author', 'cbz', 'unknown', '', '/books/loose.cbz')",
+            [],
+        )
+        .unwrap();
+
+        let counts = Database::count_books_per_series_with_connection(&conn).unwrap();
+
+        assert_eq!(counts, HashMap::from([(alpha, 2), (unlinked, 1)]));
+        assert_eq!(counts.get(&empty), None, "a series without books is absent");
+    }
+
+    #[test]
+    fn each_series_lists_its_libraries_and_one_in_none_is_absent() {
+        let conn = memory_connection();
+        let (manga, favourites) = (
+            insert_library(&conn, "manga"),
+            insert_library(&conn, "favourites"),
+        );
+        let (shared, single, alone) = (
+            insert_series(&conn, "shared"),
+            insert_series(&conn, "single"),
+            insert_series(&conn, "alone"),
+        );
+        for (library, series) in [(favourites, shared), (manga, shared), (manga, single)] {
+            link(&conn, library, series);
+        }
+
+        let libraries = Database::libraries_per_series_with_connection(&conn).unwrap();
+
+        assert_eq!(
+            libraries,
+            HashMap::from([(shared, vec![manga, favourites]), (single, vec![manga])])
+        );
+        assert_eq!(libraries.get(&alone), None);
+    }
+
+    #[test]
+    fn a_library_holds_only_the_series_linked_to_it() {
+        let conn = memory_connection();
+        let (manga, comics) = (
+            insert_library(&conn, "manga"),
+            insert_library(&conn, "comics"),
+        );
+        let berserk = insert_series(&conn, "berserk");
+        link(&conn, manga, berserk);
+
+        let holds = |library: i64, series: i64| {
+            Database::library_holds_series_with_connection(&conn, library, series).unwrap()
+        };
+        assert!(holds(manga, berserk));
+        assert!(!holds(comics, berserk));
+        assert!(!holds(manga, berserk + 1));
     }
 
     #[test]

@@ -99,7 +99,7 @@ impl LibraryType {
             _ => LibraryType::Others,
         }
     }
-    pub fn as_str(&self) -> &str {
+    pub fn as_str(&self) -> &'static str {
         match self {
             LibraryType::Books => "books",
             LibraryType::Comics => "comics",

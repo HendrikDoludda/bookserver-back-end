@@ -10,6 +10,8 @@
   "@internal_error": "Any failure inside the server; the details are only in the server's log.",
   "invalid_email": "This doesn't look like an email address.",
   "invalid_locale": "This language isn't available.",
+  "invalid_name": "A name needs 1 to 200 characters.",
+  "@invalid_name": "The name of a library or a series.",
   "invalid_or_expired_code": "This code is wrong or has expired.",
   "invalid_reading_mode": "This reading mode doesn't exist. Updating the app may help.",
   "@invalid_reading_mode": "The app asked for a reading mode the server doesn't know, usually because the app is outdated.",
