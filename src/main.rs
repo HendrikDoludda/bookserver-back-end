@@ -3,14 +3,16 @@ use bookserver_backend::app_state::AppState;
 use bookserver_backend::config;
 use bookserver_backend::database_related_scripts::db_users;
 use bookserver_backend::db::Database;
+use bookserver_backend::models::Directory;
 use bookserver_backend::models::SmtpTls;
 use bookserver_backend::routes::api_routes::start_server;
 use bookserver_backend::routes::email_helper::Mailer;
 use bookserver_backend::routes::registration::SetupCode;
 use bookserver_backend::routes::totp_cipher::TotpCipher;
 use bookserver_backend::scanner::cover_image_retriever::{bind_pdfium, Covers};
+use bookserver_backend::scanner::folder_watch::FolderWatch;
 use bookserver_backend::scanner::scan_jobs::ScanJobs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 #[tokio::main]
@@ -47,6 +49,20 @@ async fn main() -> anyhow::Result<()> {
     let covers = Covers::in_folder(Path::new("./cover_images/"), bind_pdfium().map(Arc::new))
         .context("Failed to create the cover folder ./cover_images/")?;
     let scans = ScanJobs::start(Arc::clone(&db), covers.clone());
+    let directories = Arc::clone(&db)
+        .read(|conn| {
+            Ok(Database::get_all_entries_with_connection::<Directory>(
+                conn,
+            )?)
+        })
+        .await
+        .context("Failed to read the added directories")?;
+    let watch = FolderWatch::start(
+        scans.clone(),
+        directories
+            .into_iter()
+            .map(|directory| (directory.id, PathBuf::from(directory.data.path))),
+    );
 
     let state = AppState {
         db,
@@ -55,6 +71,7 @@ async fn main() -> anyhow::Result<()> {
         totp_cipher,
         covers,
         scans,
+        watch,
     };
 
     start_server(state, listen_address)

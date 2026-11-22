@@ -17,7 +17,7 @@ use crate::{
     models::{BookFormat, ReadingDirection},
 };
 
-const FILE_NAME: &str = "ComicInfo.xml";
+pub(crate) const FILE_NAME: &str = "ComicInfo.xml";
 
 /// The largest `ComicInfo.xml` read: a real one is a few kilobytes.
 const MAX_BYTES: u64 = 1024 * 1024;

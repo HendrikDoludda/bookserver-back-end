@@ -1,6 +1,9 @@
 //! What a scan answers: the report of one run, and the status of the scan job.
 
-use std::collections::BTreeSet;
+use std::{
+    collections::BTreeSet,
+    path::{Path, PathBuf},
+};
 
 use serde::Serialize;
 
@@ -9,8 +12,14 @@ use serde::Serialize;
 pub struct ScanReport {
     /// Books this scan stored.
     pub added: usize,
+    /// Stored books whose file changed — or that got a cover at last — read again.
+    pub updated: usize,
     /// Books found stored already, left as they are.
     pub unchanged: usize,
+    /// Stored books found at another path — renamed or moved — that kept their row.
+    pub moved: usize,
+    /// Stored books whose files are gone, removed from the catalog.
+    pub removed: usize,
     /// What couldn't be read or stored: per directory, the folders the walk couldn't read, then
     /// the books.
     pub failures: Vec<ScanFailure>,
@@ -23,6 +32,21 @@ pub struct ScanFailure {
     /// Relative to the directory; empty for the directory itself.
     pub relative_path: String,
     pub error_key: ScanProblem,
+}
+
+impl ScanFailure {
+    /// The failure `error_key` at `path`, inside the directory `directory_id` at `root`.
+    pub fn at(directory_id: i64, root: &Path, path: &Path, error_key: ScanProblem) -> ScanFailure {
+        ScanFailure {
+            directory_id,
+            relative_path: path
+                .strip_prefix(root)
+                .unwrap_or(path)
+                .to_string_lossy()
+                .into_owned(),
+            error_key,
+        }
+    }
 }
 
 /// Why a scan skipped a whole directory, a folder in it, or a book.
@@ -41,38 +65,37 @@ pub enum ScanProblem {
     StoreFailed,
     /// A library reading the book panicked.
     Panicked,
+    /// The scan showed no sign of life for 2 minutes — a share that stopped answering — and was
+    /// given up on; the path is where it got stuck.
+    Stalled,
 }
 
-/// Where a scan reads.
+/// Where a scan reads: every added directory, or these folders — a directory's own, or one inside
+/// it — each with everything in it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ScanScope {
-    /// Every added directory.
     All,
-    /// These directories.
-    Directories(BTreeSet<i64>),
+    Folders(BTreeSet<PathBuf>),
 }
 
 impl ScanScope {
-    /// The directory `id` alone.
-    pub fn directory(id: i64) -> ScanScope {
-        ScanScope::Directories(BTreeSet::from([id]))
+    /// The folder at `path` alone.
+    pub fn folder(path: impl Into<PathBuf>) -> ScanScope {
+        ScanScope::Folders(BTreeSet::from([path.into()]))
     }
 
-    /// Whether the scope reads the directory `id`.
-    pub fn reads(&self, id: i64) -> bool {
-        match self {
-            ScanScope::All => true,
-            ScanScope::Directories(ids) => ids.contains(&id),
-        }
-    }
-
-    /// One scope that reads what both read.
+    /// One scope that reads what both read: a folder inside another adds nothing.
     pub fn merge(self, other: ScanScope) -> ScanScope {
         match (self, other) {
-            (ScanScope::Directories(mut ids), ScanScope::Directories(more)) => {
-                ids.extend(more);
-                ScanScope::Directories(ids)
+            (ScanScope::Folders(mut folders), ScanScope::Folders(more)) => {
+                folders.extend(more);
+                let all = folders.clone();
+                folders.retain(|folder| {
+                    !all.iter()
+                        .any(|other| other != folder && folder.starts_with(other))
+                });
+                ScanScope::Folders(folders)
             }
             _ => ScanScope::All,
         }
@@ -87,6 +110,8 @@ pub enum ScanTrigger {
     Request,
     /// A directory was added.
     DirectoryAdded,
+    /// Files changed in a watched directory.
+    Watcher,
 }
 
 /// How far a running scan got: the books its walk found, and how many of them it handled.
@@ -94,7 +119,9 @@ pub enum ScanTrigger {
 pub struct ScanProgress {
     pub found: usize,
     pub added: usize,
+    pub updated: usize,
     pub unchanged: usize,
+    pub moved: usize,
     pub failed: usize,
 }
 
@@ -131,8 +158,8 @@ pub struct RunningScan {
 pub enum ScanOutcome {
     /// It ran to its end; what it couldn't read is among its failures.
     Completed,
-    /// It stopped early — the directories couldn't be read, or it panicked — and its counts are
-    /// as far as it got.
+    /// It stopped early — the directories couldn't be read, it panicked, or it was given up on
+    /// when it stalled — and its counts are as far as it got.
     Failed,
 }
 
@@ -147,7 +174,10 @@ pub struct FinishedScan {
     pub finished_at: i64,
     pub outcome: ScanOutcome,
     pub added: usize,
+    pub updated: usize,
     pub unchanged: usize,
+    pub moved: usize,
+    pub removed: usize,
     /// Every failure; `failures` lists the first 100.
     pub failure_count: usize,
     pub failures: Vec<ScanFailure>,

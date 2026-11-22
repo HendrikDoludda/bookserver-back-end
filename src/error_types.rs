@@ -126,12 +126,16 @@ impl IntoResponse for DatabaseError {
 pub enum ScanError {
     #[error("A scan runs or waits already")]
     InProgress,
+
+    #[error("the scan was given up on: it stalled")]
+    GivenUp,
 }
 
 impl ScanError {
     fn status_and_key(&self) -> (StatusCode, &'static str) {
         match self {
             ScanError::InProgress => (StatusCode::CONFLICT, "scan_in_progress"),
+            ScanError::GivenUp => INTERNAL,
         }
     }
 }
@@ -844,6 +848,7 @@ mod tests {
             DatabaseError::OperationCommitFailure.into(),
             DatabaseError::InvalidParameters.into(),
             DirectoryError::TaskFailed.into(),
+            ScanError::GivenUp.into(),
             TranslationError::MissingText {
                 key: "email.verify_email.body".to_string(),
             }

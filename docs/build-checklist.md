@@ -26,10 +26,10 @@
 | Table of contents | F1 | completed | [82-table-of-contents](features/82-table-of-contents.md) |
 | App layout | F1 | completed | [83-app-layout](features/83-app-layout.md) |
 | Library & series management | 2 | completed | [01-library-and-series-management](features/01-library-and-series-management.md) |
-| Directory scanning | 2 | in progress | [34-directory-scanning](features/34-directory-scanning.md) |
-| Scannable directories | 2 | in progress | [35-scannable-directories](features/35-scannable-directories.md) |
+| Directory scanning | 2 | completed | [34-directory-scanning](features/34-directory-scanning.md) |
+| Scannable directories | 2 | completed | [35-scannable-directories](features/35-scannable-directories.md) |
 | Covers | 2 | completed | [36-covers](features/36-covers.md) |
-| File watching | 2 | not started | [37-file-watching](features/37-file-watching.md) |
+| File watching | 2 | completed | [37-file-watching](features/37-file-watching.md) |
 | Read state | 3 | not started | [02-read-state](features/02-read-state.md) |
 | Metadata enrichment | 3 | not started | [09-metadata-enrichment](features/09-metadata-enrichment.md) |
 | Search | 3 | not started | [11-search](features/11-search.md) |
@@ -52,8 +52,9 @@
 | Security hardening | cross-cutting | in progress | [12-security-hardening](features/12-security-hardening.md) |
 | Email & notifications | cross-cutting | in progress | [14-email-and-notifications](features/14-email-and-notifications.md) |
 | Active sessions | cross-cutting | not started | [51-active-sessions](features/51-active-sessions.md) |
-| File reconciliation | cross-cutting | not started | [53-file-reconciliation](features/53-file-reconciliation.md) |
+| File reconciliation | cross-cutting | completed | [53-file-reconciliation](features/53-file-reconciliation.md) |
 | Security audit log | cross-cutting | not started | [55-security-audit-log](features/55-security-audit-log.md) |
+| Network shares & removable drives | cross-cutting | in progress | [84-network-shares-and-removable-drives](features/84-network-shares-and-removable-drives.md) |
 | Video library & direct play | Phase 2 | blocked | [20-video](features/20-video.md) |
 | Collaborative documents | Phase 2 | blocked | [21-documents](features/21-documents.md) |
 | PDF annotations | Phase 2 | not started | [22-pdf-annotations](features/22-pdf-annotations.md) |

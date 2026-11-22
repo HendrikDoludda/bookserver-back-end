@@ -57,6 +57,7 @@ impl FromRow for BookMetadata {
             series: row.get("series")?,
             reading_direction: row.get("reading_direction")?,
             directory_id: row.get("directory_id")?,
+            fingerprint: row.get("fingerprint")?,
         })
     }
 }

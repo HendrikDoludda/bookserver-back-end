@@ -9,7 +9,7 @@ names it writes must parse back to the series, volume and chapter the uploader c
 ## Build
 - [ ] ? h · Enable axum's `multipart` feature and add the upload endpoint, gated per the who-may-upload decision; raise axum's 2 MB `DefaultBodyLimit` on this route only, not globally [BE]
 - [ ] ? h · Stream each upload to a temp file on the target drive (`field.chunk()` in a loop — `field.bytes()` would hold a whole CBZ in memory), then `rename` it into place; a same-drive rename is atomic, so no partial file ever appears at the final path [BE]
-- [ ] ? h · The backend decides folder and name from the shared naming convention, and the name must parse back through the scanner's `parse_name` to the same series, volume, chapter and page: keyword and number joined by one space, one underscore or nothing; whole numbers only [BE]
+- [ ] ? h · The backend decides folder and name from the shared naming convention, and the name must parse back through the scanner's `parse_name` to the same series, volume, chapter and page: keyword and number joined by nothing or by one space, `_`, `.` or `-`; a chapter may be a decimal one, such as `c01.5` [BE]
 - [ ] ? h · Hand the written file to [34](34-directory-scanning.md)'s scan job, which catalogs it like any other file — never insert its row here, which would race the [watcher](37-file-watching.md) [BE]
 - [ ] ? h · Refuse any write outside the chosen scannable root: sanitise user-supplied segments (series name, title), canonicalise the final path, and check it lies inside the root [BE]
 - [ ] ? h · On a name collision, add a timestamp suffix instead of overwriting, and email the uploader (their `users.email`) the new name — per the rename-suffix decision [BE]

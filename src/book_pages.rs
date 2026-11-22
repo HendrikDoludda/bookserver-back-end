@@ -96,8 +96,8 @@ pub fn archive_page(
     Ok((read_entry(&mut archive, &name, max_bytes)?, media_type))
 }
 
-/// The page images directly in `folder`; its subfolders are books of their own.
-fn folder_pages(folder: &Path) -> Result<Vec<PathBuf>, PageError> {
+/// The page images directly in `folder`, in page order; its subfolders are books of their own.
+pub(crate) fn folder_pages(folder: &Path) -> Result<Vec<PathBuf>, PageError> {
     let entries = fs::read_dir(folder).map_err(missing_or_unreadable)?;
     let mut pages: Vec<PathBuf> = entries
         .filter_map(|entry| entry.ok())
@@ -127,7 +127,7 @@ fn archive_pages<R: Read + Seek>(archive: &ZipArchive<R>) -> Vec<(String, &'stat
 
 /// The media type of a page image by its file name's extension, in any case; `None` for any
 /// other file, and for a hidden one such as macOS's `._` copies.
-fn page_media_type(file_name: &str) -> Option<&'static str> {
+pub(crate) fn page_media_type(file_name: &str) -> Option<&'static str> {
     if file_name.starts_with('.') {
         return None;
     }
@@ -190,6 +190,21 @@ pub(crate) fn read_entry(
     Ok(bytes)
 }
 
+/// The bytes of the page file at `path`, refused when larger than `max_bytes`.
+pub(crate) fn read_page_file(path: &Path, max_bytes: u64) -> Result<Vec<u8>, PageError> {
+    let mut bytes = Vec::new();
+    File::open(path)
+        .and_then(|file| file.take(max_bytes + 1).read_to_end(&mut bytes))
+        .map_err(PageError::Unreadable)?;
+    if bytes.len() as u64 > max_bytes {
+        return Err(PageError::PageTooLarge {
+            name: file_name(path).to_string(),
+            max_bytes,
+        });
+    }
+    Ok(bytes)
+}
+
 /// The size of the archive entry `name`, from as little of its start as holds the header. A zip
 /// entry can't seek past the blocks before it, so the read grows fourfold until the header fits.
 fn entry_size(archive: &mut ZipArchive<File>, name: &str) -> Option<ImageSize> {
@@ -236,6 +251,22 @@ mod tests {
 
     use super::*;
     use crate::test_support::{encoded_image, TempDir};
+
+    #[test]
+    fn a_page_file_is_read_whole_up_to_its_limit_and_refused_past_it() {
+        let dir = TempDir::new();
+        let page = dir.write("Pluto/001.jpg", b"ten bytes!");
+
+        assert_eq!(read_page_file(&page, 10).unwrap(), b"ten bytes!");
+        assert!(matches!(
+            read_page_file(&page, 9),
+            Err(PageError::PageTooLarge { max_bytes: 9, .. })
+        ));
+        assert!(matches!(
+            read_page_file(&dir.path().join("Pluto/002.jpg"), 10),
+            Err(PageError::Unreadable(_))
+        ));
+    }
 
     fn names(paths: &[PathBuf]) -> Vec<&str> {
         paths.iter().map(|path| file_name(path)).collect()

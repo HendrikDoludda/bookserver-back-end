@@ -352,6 +352,34 @@ impl Database {
         T::search_for_row(conn, columns, values, query_separator)
     }
 
+    pub fn search_for_single_row_with_id<T>(
+        &self,
+        columns: &[T::Column],
+        values: &[&dyn ToSql],
+        query_separator: QuerySeparator,
+    ) -> Result<Option<WithId<T>>, DatabaseError>
+    where
+        T: Search + Extract + Serialize,
+    {
+        let conn = self
+            .pool
+            .get()
+            .map_err(|_| DatabaseError::PoolConnectionRetrievalFailure)?;
+        Self::search_for_single_row_with_id_with_connection(&conn, columns, values, query_separator)
+    }
+
+    pub fn search_for_single_row_with_id_with_connection<T>(
+        conn: &Connection,
+        columns: &[T::Column],
+        values: &[&dyn ToSql],
+        query_separator: QuerySeparator,
+    ) -> Result<Option<WithId<T>>, DatabaseError>
+    where
+        T: Search + Extract + Serialize,
+    {
+        T::search_for_row_with_id(conn, columns, values, query_separator)
+    }
+
     pub fn search_for_multiple_rows<T>(
         &self,
         columns: &[T::Column],
@@ -630,6 +658,82 @@ impl Database {
         ))
     }
 
+    /// The id, stored path and series of every book in the directory — of every book in none, for
+    /// `None` — by id.
+    pub fn books_placed_in_with_connection(
+        conn: &Connection,
+        directory_id: Option<i64>,
+    ) -> Result<Vec<(i64, String, Option<i64>)>, DatabaseError> {
+        let mut stmt = conn
+            .prepare("SELECT id, file_path, series FROM books WHERE directory_id IS ?1 ORDER BY id")
+            .map_err(logged(
+                "reading",
+                "books",
+                DatabaseError::TaskPreparationFailure,
+            ))?;
+        let rows = stmt
+            .query_map([directory_id], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })
+            .map_err(logged("reading", "books", DatabaseError::QueryFailure))?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(logged(
+            "reading",
+            "books",
+            DatabaseError::NextRowFailure,
+        ))
+    }
+
+    /// The id, stored path and directory of every book whose file hashes to `hash`, by id.
+    pub fn books_with_hash_with_connection(
+        conn: &Connection,
+        hash: &str,
+    ) -> Result<Vec<(i64, String, Option<i64>)>, DatabaseError> {
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, file_path, directory_id FROM books WHERE file_hash = ?1 ORDER BY id",
+            )
+            .map_err(logged(
+                "reading",
+                "books",
+                DatabaseError::TaskPreparationFailure,
+            ))?;
+        let rows = stmt
+            .query_map([hash], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .map_err(logged("reading", "books", DatabaseError::QueryFailure))?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(logged(
+            "reading",
+            "books",
+            DatabaseError::NextRowFailure,
+        ))
+    }
+
+    /// Every cover file a book, a series or a library names.
+    pub fn cover_names_with_connection(
+        conn: &Connection,
+    ) -> Result<std::collections::HashSet<String>, DatabaseError> {
+        let mut stmt = conn
+            .prepare(
+                "SELECT cover_image FROM books WHERE cover_image IS NOT NULL \
+                 UNION SELECT cover_image FROM series WHERE cover_image IS NOT NULL \
+                 UNION SELECT cover_image FROM library WHERE cover_image IS NOT NULL",
+            )
+            .map_err(logged(
+                "reading",
+                "covers",
+                DatabaseError::TaskPreparationFailure,
+            ))?;
+        let rows = stmt.query_map([], |row| row.get(0)).map_err(logged(
+            "reading",
+            "covers",
+            DatabaseError::QueryFailure,
+        ))?;
+        rows.collect::<Result<_, _>>().map_err(logged(
+            "reading",
+            "covers",
+            DatabaseError::NextRowFailure,
+        ))
+    }
+
     /// The series that hold a book of the directory, by id.
     pub fn series_of_directory_with_connection(
         conn: &Connection,
@@ -725,18 +829,24 @@ impl Database {
         F: FnOnce(&Connection) -> Result<T, AppErrors> + Send + 'static,
         T: Send + 'static,
     {
-        tokio::task::spawn_blocking(move || {
-            let conn = self.pool.get().map_err(|err| {
-                tracing::error!("Got an error when trying to set up a new connection: {err}");
-                DatabaseError::PoolConnectionRetrievalFailure
-            })?;
-            operation(&conn)
-        })
-        .await
-        .map_err(|err| {
-            tracing::error!("The read task did not finish: {err}");
-            DatabaseError::TransactionFailure
-        })?
+        tokio::task::spawn_blocking(move || self.read_now(operation))
+            .await
+            .map_err(|err| {
+                tracing::error!("The read task did not finish: {err}");
+                DatabaseError::TransactionFailure
+            })?
+    }
+
+    /// [`Database::read`] for code already on a blocking thread, such as a scan.
+    pub fn read_now<F, T>(&self, operation: F) -> Result<T, AppErrors>
+    where
+        F: FnOnce(&Connection) -> Result<T, AppErrors>,
+    {
+        let conn = self.pool.get().map_err(|err| {
+            tracing::error!("Got an error when trying to set up a new connection: {err}");
+            DatabaseError::PoolConnectionRetrievalFailure
+        })?;
+        operation(&conn)
     }
 }
 
@@ -1350,5 +1460,23 @@ mod tests {
             folder,
             std::fs::canonicalize(temp.path().parent().unwrap()).unwrap()
         );
+    }
+
+    #[test]
+    fn a_decimal_chapter_comes_between_the_whole_ones_around_it() {
+        let conn = memory_connection();
+        let series = insert_series(&conn, "one piece");
+        let two = insert_book(&conn, series, "One Piece", None, Some(2));
+        let half = insert_book(&conn, series, "One Piece", None, None);
+        conn.execute(
+            "UPDATE books SET chapter_number = 1.5 WHERE id = ?1",
+            [half],
+        )
+        .unwrap();
+        let one = insert_book(&conn, series, "One Piece", None, Some(1));
+
+        let ids = Database::get_books_in_series_with_connection(&conn, series).unwrap();
+
+        assert_eq!(ids, [one, half, two]);
     }
 }

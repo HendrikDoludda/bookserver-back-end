@@ -152,6 +152,7 @@ mod tests {
             auth::{hash_secret, hash_token},
             email_helper::Mailer,
         },
+        scanner::folder_watch::FolderWatch,
         test_support::{
             code_in, encoded_image, insert_texts, insert_user, TempDatabase, TempDir,
             TEST_SETUP_CODE,
@@ -852,7 +853,10 @@ mod tests {
         let file = files.write("Manga/Berserk v01.cbz", b"cbz");
         let berserk = scanned_series(&temp, "Berserk");
         scanned_book(&temp, berserk, &file.to_string_lossy());
-        let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
+        let mut state = temp.state(Mailer::Disabled);
+        state.watch = FolderWatch::start(state.scans.clone(), []);
+        let watch = state.watch.clone();
+        let app = set_up_routes().with_state(state);
         let folder = files.path().join("Manga");
 
         let body = serde_json::json!({
@@ -872,6 +876,7 @@ mod tests {
             "id": directory,
             "path": canonical(&folder),
             "library_id": library,
+            "watching": true,
         }]);
         assert_eq!(json(&added), expected[0]);
 
@@ -897,6 +902,7 @@ mod tests {
         let (status, _, body) = call(&app, authorized("DELETE", &uri, &admin, None)).await;
         assert_eq!(status, StatusCode::NO_CONTENT);
         assert!(body.is_empty());
+        assert!(!watch.watching(directory));
         let (_, _, listed) =
             call(&app, authorized("GET", "/api/v1/directories", &admin, None)).await;
         assert_eq!(json(&listed), serde_json::json!([]));
@@ -3107,7 +3113,7 @@ mod tests {
         let app = set_up_routes().with_state(state);
         let one_folder = format!("/api/v1/directories/{directory}/scan");
         let waiting = serde_json::json!({
-            "scope": { "directories": [directory] },
+            "scope": { "folders": ["/books"] },
             "triggers": ["request"],
         });
 
@@ -3156,6 +3162,11 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::CREATED);
+        assert_eq!(
+            json(&added)["watching"],
+            false,
+            "nothing watches in this state"
+        );
         scans.idle().await;
 
         let (_, _, libraries) =
@@ -3167,7 +3178,7 @@ mod tests {
         assert_eq!(
             (&last["scope"], &last["triggers"], &last["added"]),
             (
-                &serde_json::json!({ "directories": [json(&added)["id"]] }),
+                &serde_json::json!({ "folders": [json(&added)["path"]] }),
                 &serde_json::json!(["directory_added"]),
                 &serde_json::json!(1)
             )

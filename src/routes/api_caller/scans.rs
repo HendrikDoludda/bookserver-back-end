@@ -31,9 +31,10 @@ pub async fn scan_directory(
     State(scans): State<ScanJobs>,
     PathParams(id): PathParams<i64>,
 ) -> Result<(StatusCode, Json<ScanStatus>), AppErrors> {
-    db.read(move |conn| Ok(Database::get_entry_with_connection::<Directory>(conn, id)?))
+    let directory = db
+        .read(move |conn| Ok(Database::get_entry_with_connection::<Directory>(conn, id)?))
         .await?;
-    let status = scans.request(ScanScope::directory(id))?;
+    let status = scans.request(ScanScope::folder(directory.path))?;
     Ok((StatusCode::ACCEPTED, Json(status)))
 }
 

@@ -127,7 +127,7 @@ impl Extract for BookMetadata {
     const COLUMNS: &'static str = "id, title, author, format, language, cover_image, \
         description, tags, file_path, page_count, volume_number, chapter_number, \
         page_number, file_hash, last_modified, file_size, series, reading_direction, \
-        directory_id";
+        directory_id, fingerprint";
 }
 
 impl Extract for Directory {

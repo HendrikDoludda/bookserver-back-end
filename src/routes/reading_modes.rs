@@ -90,6 +90,7 @@ mod tests {
             file_size: None,
             reading_direction: direction,
             directory_id: None,
+            fingerprint: None,
         }
     }
 

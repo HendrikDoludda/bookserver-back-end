@@ -273,7 +273,7 @@ pub struct BookMetadata {
     pub page_count: Option<i32>,
     pub series: Option<i64>,
     pub volume_number: Option<i64>,
-    pub chapter_number: Option<i64>,
+    pub chapter_number: Option<f64>,
     pub page_number: Option<i64>,
     pub file_hash: Option<String>,
     pub last_modified: Option<SystemTime>,
@@ -283,6 +283,9 @@ pub struct BookMetadata {
     /// The scanned folder the file lies in; `None` for a book scanned before folders were stored,
     /// until adding its folder adopts it.
     pub directory_id: Option<i64>,
+    /// What the file looked like when it was last read, to tell a changed one apart without
+    /// reading it; never sent to clients.
+    pub fingerprint: Option<String>,
 }
 
 pub enum BookDatabaseColumns {
@@ -304,6 +307,7 @@ pub enum BookDatabaseColumns {
     FileSize,
     ReadingDirection,
     DirectoryId,
+    Fingerprint,
 }
 
 impl AsRef<str> for BookDatabaseColumns {
@@ -327,6 +331,7 @@ impl AsRef<str> for BookDatabaseColumns {
             BookDatabaseColumns::FileSize => "file_size",
             BookDatabaseColumns::ReadingDirection => "reading_direction",
             BookDatabaseColumns::DirectoryId => "directory_id",
+            BookDatabaseColumns::Fingerprint => "fingerprint",
         }
     }
 }
@@ -485,24 +490,8 @@ impl AsRef<str> for SeriesLibraryConnectionDatabaseColumns {
 pub struct ParsedName {
     pub title: String,
     pub volume_number: Option<i64>,
-    pub chapter_number: Option<i64>,
+    pub chapter_number: Option<f64>,
     pub page_number: Option<i64>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FileExtractedMetadata {
-    pub file_size: Option<u64>,
-    pub modified_date: Option<SystemTime>,
-    pub page_number: Option<i32>,
-    pub language_code: BookLanguage,
-    pub author: String,
-}
-
-pub enum DatabaseEntry {
-    Book(BookMetadata),
-    Library(LibraryMetadata),
-    Series(BookSeriesMetadata),
-    User(UserMetadata),
 }
 
 // === Sessions ================================================================

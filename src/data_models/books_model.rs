@@ -1,4 +1,4 @@
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::{
     db::checked_unix_time,
@@ -106,6 +106,8 @@ pub struct NewDirectory {
 pub struct DirectorySummary {
     pub path: String,
     pub library_id: Option<i64>,
+    /// Whether the system reports its changes; the route fills it in from `FolderWatch`.
+    pub watching: bool,
 }
 
 impl From<Directory> for DirectorySummary {
@@ -113,6 +115,7 @@ impl From<Directory> for DirectorySummary {
         DirectorySummary {
             path: directory.path,
             library_id: directory.library_id,
+            watching: false,
         }
     }
 }
@@ -155,10 +158,24 @@ pub struct BookSummary {
     pub page_count: Option<i32>,
     pub series: Option<i64>,
     pub volume_number: Option<i64>,
-    pub chapter_number: Option<i64>,
+    /// A whole chapter goes out as an integer — `12`, not `12.0` — which app versions that read
+    /// whole chapters only still accept.
+    #[serde(serialize_with = "whole_as_integer")]
+    pub chapter_number: Option<f64>,
     pub page_number: Option<i64>,
     pub last_modified: Option<i64>,
     pub file_size: Option<u64>,
+}
+
+fn whole_as_integer<S: Serializer>(number: &Option<f64>, serializer: S) -> Result<S::Ok, S::Error> {
+    match *number {
+        // Above 2^53 an `f64` no longer holds every whole number, so it stays one.
+        Some(number) if number.fract() == 0.0 && number.abs() < 9_007_199_254_740_992.0 => {
+            serializer.serialize_i64(number as i64)
+        }
+        Some(number) => serializer.serialize_f64(number),
+        None => serializer.serialize_none(),
+    }
 }
 
 /// One book as `GET /books/{id}` answers it: its summary, and the mode the calling user opens it
@@ -246,6 +263,7 @@ mod tests {
             file_size: Some(2048),
             reading_direction: None,
             directory_id: Some(2),
+            fingerprint: Some("1234:5678".to_string()),
         }
     }
 
@@ -323,5 +341,22 @@ mod tests {
             serde_json::json!({ "library_type": "novels" }),
         );
         assert!(unknown.is_err());
+    }
+
+    #[test]
+    fn a_whole_chapter_goes_out_as_an_integer_and_a_decimal_one_as_it_is() {
+        let chapter = |chapter_number: Option<f64>| {
+            serde_json::to_value(BookSummary::from(BookMetadata {
+                chapter_number,
+                ..scanned_book()
+            }))
+            .unwrap()["chapter_number"]
+                .clone()
+        };
+
+        assert!(chapter(Some(12.0)).is_i64(), "12, not 12.0");
+        assert_eq!(chapter(Some(12.0)), serde_json::json!(12));
+        assert_eq!(chapter(Some(1.5)), serde_json::json!(1.5));
+        assert_eq!(chapter(None), serde_json::Value::Null);
     }
 }

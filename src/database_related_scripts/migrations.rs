@@ -45,6 +45,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "directories",
         sql: include_str!("../../migrations/0006_directories.sql"),
     },
+    Migration {
+        version: 7,
+        name: "book fingerprints",
+        sql: include_str!("../../migrations/0007_book_fingerprints.sql"),
+    },
 ];
 
 // Apply every migration that has not yet been recorded in `schema_migrations`.
@@ -308,6 +313,7 @@ mod tests {
             ("books", "series"),
             ("books", "reading_direction"),
             ("books", "directory_id"),
+            ("books", "fingerprint"),
             ("library", "cover_image"),
             ("library", "description"),
             ("series", "description"),
@@ -1026,9 +1032,10 @@ mod tests {
         assert_eq!(after.len(), before.len());
         for (old, new) in before.iter().zip(&after) {
             assert_eq!(new[..old.len()], old[..], "every column kept");
+            // Later migrations append columns of their own after it.
             assert_eq!(
-                new[old.len()..],
-                [rusqlite::types::Value::Null],
+                new[old.len()],
+                rusqlite::types::Value::Null,
                 "and in no directory"
             );
         }
@@ -1055,6 +1062,50 @@ mod tests {
             params![path, library_id],
         )?;
         Ok(conn.last_insert_rowid())
+    }
+
+    #[test]
+    fn a_database_of_the_sixth_schema_keeps_its_books_with_no_fingerprint_yet() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        configure(&conn).unwrap();
+        // As a server of the sixth schema left it.
+        for migration in &MIGRATIONS[..6] {
+            conn.execute_batch(migration.sql).unwrap();
+        }
+        conn.execute_batch(
+            "CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, \
+             applied_at INTEGER NOT NULL); \
+             INSERT INTO schema_migrations (version, applied_at) \
+             VALUES (1, 0), (2, 0), (3, 0), (4, 0), (5, 0), (6, 0);",
+        )
+        .unwrap();
+        let berserk = insert_series(&conn, "berserk");
+        insert_full_book(&conn, "/books/Berserk v01.cbz", Some(berserk)).unwrap();
+        let before = book_rows(&conn);
+
+        run(&mut conn).unwrap();
+
+        let after = book_rows(&conn);
+        assert_eq!(after.len(), 1);
+        assert_eq!(
+            after[0][..before[0].len()],
+            before[0][..],
+            "every column kept"
+        );
+        assert_eq!(
+            after[0][before[0].len()],
+            rusqlite::types::Value::Null,
+            "no fingerprint until its file is read again"
+        );
+        let index: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' \
+                 AND tbl_name = 'books' AND name = 'books_by_hash'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(index, 1);
     }
 
     #[test]

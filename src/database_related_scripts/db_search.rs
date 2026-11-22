@@ -1,14 +1,16 @@
 use crate::data_models::models::{
     BookDatabaseColumns, BookMetadata, BookSeriesMetadata, LibraryDatabaseColumns, LibraryMetadata,
     QuerySeparator, RecoveryCodes, RecoveryCodesColumns, SeriesDatabaseColumns, Sessions,
-    SessionsDatabaseColumns, TOTPDatabaseColumns, UserDatabaseColumns, UserMetadata, TOTP,
+    SessionsDatabaseColumns, TOTPDatabaseColumns, UserDatabaseColumns, UserMetadata, WithId, TOTP,
 };
 use crate::database_related_scripts::{
     db::{each_equal, logged, where_conditions},
     db_from_row::FromRow,
+    extract::Extract,
 };
 use crate::error_types::DatabaseError;
 use rusqlite::{Connection, OptionalExtension, Result, ToSql};
+use serde::Serialize;
 
 /// Find rows by arbitrary column values, joined with `AND` or `OR`.
 /// Column names come from trusted enums; values are always bound parameters.
@@ -28,6 +30,36 @@ pub trait Search: FromRow {
         conn.query_row(&query, values, Self::from_row)
             .optional()
             .map_err(logged("reading", Self::TABLE, DatabaseError::QueryFailure))
+    }
+
+    /// [`Search::search_for_row`], with the row's id: its [`Extract::KEY`] column.
+    fn search_for_row_with_id(
+        conn: &Connection,
+        columns: &[Self::Column],
+        values: &[&dyn ToSql],
+        query_separator: QuerySeparator,
+    ) -> Result<Option<WithId<Self>>, DatabaseError>
+    where
+        Self: Extract + Serialize,
+    {
+        let filter = where_conditions(&each_equal(columns), values, query_separator)?;
+        let query = format!(
+            "SELECT * FROM {} WHERE {} LIMIT 1",
+            <Self as Search>::TABLE,
+            filter
+        );
+        conn.query_row(&query, values, |row| {
+            Ok(WithId {
+                id: row.get(<Self as Extract>::KEY)?,
+                data: Self::from_row(row)?,
+            })
+        })
+        .optional()
+        .map_err(logged(
+            "reading",
+            <Self as Search>::TABLE,
+            DatabaseError::QueryFailure,
+        ))
     }
 
     fn search_for_multiple_rows(

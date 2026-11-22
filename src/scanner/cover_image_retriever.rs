@@ -1,16 +1,17 @@
 use image::ImageFormat;
 use pdfium_render::prelude::*;
-use std::fs::{self, File};
-use std::io::{self, Read};
+use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use uuid::Uuid;
 
 use crate::{
     book_pages, data_models::models::BookFormat, error_types::CoverImageError,
     scanner::epub_package,
 };
 
-const DEFAULT_IMAGE: &str = "example-cover.png";
+pub(crate) const DEFAULT_IMAGE: &str = "example-cover.png";
 
 /// The extensions a cover can have; an existing cover is looked for under each.
 const COVER_EXTENSIONS: [&str; 4] = ["jpg", "png", "webp", "gif"];
@@ -142,12 +143,11 @@ fn pdf_cover(
         .map_err(|_| CoverImageError::CoverCreationFailed)?
         .into_rgb8();
 
-    let name = format!("{hash}.jpg");
-    create_folder(folder)?;
+    let mut jpeg = Vec::new();
     image::DynamicImage::ImageRgb8(image)
-        .save_with_format(folder.join(&name), ImageFormat::Jpeg)
+        .write_to(&mut io::Cursor::new(&mut jpeg), ImageFormat::Jpeg)
         .map_err(|_| CoverImageError::CoverCreationFailed)?;
-    Ok(name)
+    write_cover(folder, hash, "jpg", &jpeg)
 }
 
 /// The cover of an EPUB: the image its package document names. `None` when it names none the app
@@ -159,19 +159,12 @@ fn epub_cover(folder: &Path, path: &Path, hash: &str) -> Result<Option<String>, 
     write_cover(folder, hash, extension, &image).map(Some)
 }
 
-/// The cover of an image folder: its page 1, once its first bytes show it is a picture.
+/// The cover of an image folder: its page 1, once its bytes show it is a picture.
 fn folder_cover(folder: &Path, path: &Path, hash: &str) -> Result<String, CoverImageError> {
     let first = book_pages::folder_page(path, 1)?;
-    let mut start = Vec::new();
-    File::open(&first)
-        .and_then(|file| file.take(64).read_to_end(&mut start))
-        .map_err(|_| CoverImageError::FileNotFound)?;
-    let extension = image_extension(&start)?;
-
-    let name = format!("{hash}.{extension}");
-    create_folder(folder)?;
-    fs::copy(&first, folder.join(&name)).map_err(|_| CoverImageError::CoverCreationFailed)?;
-    Ok(name)
+    let image = book_pages::read_page_file(&first, book_pages::MAX_PAGE_BYTES)?;
+    let extension = image_extension(&image)?;
+    write_cover(folder, hash, extension, &image)
 }
 
 /// The extension of the picture `data` starts with, by its content, whatever its file is called.
@@ -188,7 +181,14 @@ fn write_cover(
 ) -> Result<String, CoverImageError> {
     let name = format!("{hash}.{extension}");
     create_folder(folder)?;
-    fs::write(folder.join(&name), data).map_err(|_| CoverImageError::CoverCreationFailed)?;
+    // Renamed only once whole: a write cut short must not leave a file a later scan takes for a
+    // finished cover. Two scans may write the same cover at once, so each has its own temp name.
+    let partial = folder.join(format!(".{name}.{}.partial", Uuid::new_v4()));
+    let written = fs::write(&partial, data).and_then(|()| fs::rename(&partial, folder.join(&name)));
+    if written.is_err() {
+        let _ = fs::remove_file(&partial);
+        return Err(CoverImageError::CoverCreationFailed);
+    }
     Ok(name)
 }
 
@@ -214,6 +214,50 @@ mod tests {
     fn a_cbz_cover_is_its_first_page_named_by_the_hash_in_the_cover_folder() {
         let books = TempDir::new();
         let covers = covers_in(&books);
+        let png = encoded_image(ImageFormat::Png, 2, 3);
+        let cbz = books.write_cbz("Berserk v01.cbz", &[("001.png", &png)]);
+
+        let name = cover_for(&covers, &cbz, &BookFormat::Cbz, Some(HASH));
+
+        assert_eq!(name.as_deref(), Some("0123abcd.png"));
+        assert_eq!(fs::read(covers.path_of("0123abcd.png")).unwrap(), png);
+    }
+
+    fn files_in(folder: &Path) -> Vec<String> {
+        let mut names: Vec<String> = fs::read_dir(folder)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn a_cover_is_renamed_into_place_once_whole_and_leaves_no_temporary_file() {
+        let books = TempDir::new();
+        let covers = covers_in(&books);
+        let png = encoded_image(ImageFormat::Png, 2, 3);
+        books.write("Pluto/001.png", &png);
+        let cbz = books.write_cbz("Berserk v01.cbz", &[("001.png", &png)]);
+
+        cover_for(&covers, &cbz, &BookFormat::Cbz, Some(HASH));
+        cover_for(
+            &covers,
+            &books.path().join("Pluto"),
+            &BookFormat::ImageComic,
+            Some("4567cdef"),
+        );
+
+        assert_eq!(files_in(&covers.folder), ["0123abcd.png", "4567cdef.png"]);
+    }
+
+    #[test]
+    fn a_temporary_file_left_by_a_write_cut_short_is_not_taken_for_a_cover() {
+        let books = TempDir::new();
+        let covers = covers_in(&books);
+        fs::create_dir_all(&covers.folder).unwrap();
+        let torn = covers.folder.join(".0123abcd.png.1234.partial");
+        fs::write(&torn, b"half a pic").unwrap();
         let png = encoded_image(ImageFormat::Png, 2, 3);
         let cbz = books.write_cbz("Berserk v01.cbz", &[("001.png", &png)]);
 

@@ -18,9 +18,9 @@ impl Insert for BookMetadata {
         let query = "INSERT INTO books (title, author, format, language, cover_image, \
             description, tags, file_path, page_count, volume_number, chapter_number, \
             page_number, file_hash, last_modified, file_size, series, reading_direction, \
-            directory_id) \
+            directory_id, fingerprint) \
             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, \
-            ?18)";
+            ?18, ?19)";
 
         let params = params![
             self.title.clone(),
@@ -40,7 +40,8 @@ impl Insert for BookMetadata {
             self.file_size.map(|size| size as i64),
             self.series,
             self.reading_direction,
-            self.directory_id
+            self.directory_id,
+            self.fingerprint.clone()
         ];
 
         conn.execute(query, params).map_err(logged(
@@ -309,6 +310,7 @@ mod tests {
             file_size: None,
             reading_direction: None,
             directory_id: None,
+            fingerprint: None,
         }
     }
 
@@ -333,13 +335,14 @@ mod tests {
             page_count: Some(240),
             series: Some(series_id),
             volume_number: Some(3),
-            chapter_number: Some(12),
+            chapter_number: Some(12.0),
             page_number: Some(7),
             file_hash: Some("abc".to_string()),
             last_modified: Some(at(1_700_000_000)),
             file_size: Some(1_048_576),
             reading_direction: Some(ReadingDirection::Rtl),
             directory_id: Some(directory_id),
+            fingerprint: Some("1234:5678".to_string()),
         };
         let id = Database::insert_with_connection(&conn, &book).unwrap();
 
@@ -358,13 +361,14 @@ mod tests {
         assert_eq!(stored.page_count, Some(240));
         assert_eq!(stored.series, Some(series_id));
         assert_eq!(stored.volume_number, Some(3));
-        assert_eq!(stored.chapter_number, Some(12));
+        assert_eq!(stored.chapter_number, Some(12.0));
         assert_eq!(stored.page_number, Some(7));
         assert_eq!(stored.file_hash.as_deref(), Some("abc"));
         assert_eq!(stored.last_modified, Some(at(1_700_000_000)));
         assert_eq!(stored.file_size, Some(1_048_576));
         assert_eq!(stored.reading_direction, Some(ReadingDirection::Rtl));
         assert_eq!(stored.directory_id, Some(directory_id));
+        assert_eq!(stored.fingerprint.as_deref(), Some("1234:5678"));
     }
 
     #[test]
@@ -387,6 +391,7 @@ mod tests {
         assert_eq!(stored.file_size, None);
         assert_eq!(stored.reading_direction, None);
         assert_eq!(stored.directory_id, None);
+        assert_eq!(stored.fingerprint, None);
     }
 
     #[test]

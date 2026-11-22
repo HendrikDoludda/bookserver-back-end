@@ -24,7 +24,7 @@ use crate::{
         registration::SetupCode,
         totp_cipher::TotpCipher,
     },
-    scanner::{cover_image_retriever::Covers, scan_jobs::ScanJobs},
+    scanner::{cover_image_retriever::Covers, folder_watch::FolderWatch, scan_jobs::ScanJobs},
 };
 
 /// The setup code of every test router; first sign-ups in tests send it.
@@ -194,8 +194,8 @@ impl TempDatabase {
     }
 
     /// Router state on this database, with the given mailer, `TEST_SETUP_CODE`,
-    /// `test_cipher()`, [`TempDatabase::covers`] as the cover folder, without PDFium, and a scan
-    /// worker of its own.
+    /// `test_cipher()`, [`TempDatabase::covers`] as the cover folder, without PDFium, a scan
+    /// worker of its own, and no directory watched.
     pub fn state(&self, mailer: Mailer) -> AppState {
         let covers = Covers::in_folder(self.covers.path(), None).expect("make the cover folder");
         AppState {
@@ -205,6 +205,7 @@ impl TempDatabase {
             totp_cipher: test_cipher(),
             scans: ScanJobs::start(Arc::clone(&self.db), covers.clone()),
             covers,
+            watch: FolderWatch::off(),
         }
     }
 }

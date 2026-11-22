@@ -1,6 +1,6 @@
 # Scannable directories
 
-State: in progress
+State: completed
 
 The folders the scanner reads live in the database, managed through the API from both UIs, so
 changing them needs no restart. A directory added with its "create a library" toggle on gets a
@@ -15,4 +15,4 @@ library of its own; with it off, its series wait in no library until an admin ad
 - [x] 1 h · Removing a directory deletes its books' rows and the series left without books; the files stay [BE]
 - [x] 2 h · Scan the directories from the table and stop reading `BOOK_DIRS`; a toggle-on directory's new series join its library [BE]
 - [x] 2 h · Scan one directory: `POST /directories/{id}/scan` (answers 501 until then), through [34](34-directory-scanning.md)'s scan job; adding a directory queues its first scan [BE]
-- [ ] 3 h · Add and remove directories in the app's Manage screen: the server path, the toggle with the library's name and type, and a confirmation before removing [FE]
+- [x] 3 h · Add and remove directories in the app's Manage screen: the server path, the toggle with the library's name and type, and a confirmation before removing [FE]
