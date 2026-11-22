@@ -96,8 +96,10 @@ fn folder_pages(folder: &Path) -> Result<Vec<PathBuf>, PageError> {
     let entries = fs::read_dir(folder).map_err(missing_or_unreadable)?;
     let mut pages: Vec<PathBuf> = entries
         .filter_map(|entry| entry.ok())
+        // A symlink is never a page: it could lead out of the book's directory.
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
         .map(|entry| entry.path())
-        .filter(|path| path.is_file() && page_media_type(file_name(path)).is_some())
+        .filter(|path| page_media_type(file_name(path)).is_some())
         .collect();
     pages.sort_by(|a, b| natural_order(file_name(a), file_name(b)));
     Ok(pages)
@@ -292,6 +294,23 @@ mod tests {
             page(&BookFormat::ImageComic, &book, 3, MAX_PAGE_BYTES).unwrap(),
             PageContent::File(book.join("10.jpg"))
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlink_in_a_folder_is_no_page_wherever_it_leads() {
+        let dir = TempDir::new();
+        dir.write("book/1.png", b"one");
+        let outside = dir.write("elsewhere/2.png", b"outside");
+        let book = dir.path().join("book");
+        std::os::unix::fs::symlink(&outside, book.join("2.png")).unwrap();
+        std::os::unix::fs::symlink(book.join("1.png"), book.join("3.png")).unwrap();
+
+        assert_eq!(names(&folder_pages(&book).unwrap()), ["1.png"]);
+        assert!(matches!(
+            page(&BookFormat::ImageComic, &book, 2, MAX_PAGE_BYTES),
+            Err(PageError::NoSuchPage)
+        ));
     }
 
     #[test]

@@ -11,6 +11,7 @@ pub mod login;
 pub mod password_reset;
 pub mod reading_modes;
 pub mod registration;
+pub mod served_files;
 pub mod totp_cipher;
 pub mod totp_management;
 pub mod translations;

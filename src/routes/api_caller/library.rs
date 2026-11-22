@@ -1,8 +1,4 @@
-//! TODO: link each scannable directory to its metadata-agent result.
-//! TODO: check that served file paths lie inside a scannable directory or the
-//!       cover-images folder.
-
-use std::{path::Path, sync::Arc};
+use std::sync::Arc;
 
 use axum::{
     body::Body,
@@ -23,10 +19,7 @@ use crate::{
     error_types::{internal_error_response, AppErrors, DatabaseError, PageError},
     folder_scanner::scan_all_folders,
     models::{BookMetadata, BookSeriesMetadata, DatabaseTypes, LibraryMetadata, WithId},
-    routes::{
-        covers::{self, CoverKind},
-        library_management, reading_modes,
-    },
+    routes::{covers::CoverKind, library_management, reading_modes, served_files},
     scanner::cover_image_retriever::Covers,
     stream_reader::serve_file,
 };
@@ -125,8 +118,8 @@ pub async fn request_file(
     request: Request<Body>,
 ) -> Result<Response<Body>, AppErrors> {
     // TODO: also serve partial books.
-    let book = read_book(db, id).await?;
-    Ok(serve_file(Path::new(&book.file_path), request).await)
+    let book = served_files::book_file(db, id).await?;
+    Ok(serve_file(&book.path, request).await)
 }
 
 /// List the pages of an image-folder or CBZ book, numbered from 1, each with its size.
@@ -135,9 +128,8 @@ pub async fn get_pages(
     State(db): State<Arc<Database>>,
     PathParams(id): PathParams<i64>,
 ) -> Result<Json<Vec<PageSummary>>, AppErrors> {
-    let book = read_book(db, id).await?;
-    let sizes =
-        blocking(move || book_pages::page_sizes(&book.format, Path::new(&book.file_path))).await?;
+    let book = served_files::book_file(db, id).await?;
+    let sizes = blocking(move || book_pages::page_sizes(&book.format, &book.path)).await?;
     Ok(Json(
         sizes
             .into_iter()
@@ -158,14 +150,9 @@ pub async fn get_page(
     PathParams((id, number)): PathParams<(i64, usize)>,
     request: Request<Body>,
 ) -> Result<Response<Body>, AppErrors> {
-    let book = read_book(db, id).await?;
+    let book = served_files::book_file(db, id).await?;
     let page = blocking(move || {
-        book_pages::page(
-            &book.format,
-            Path::new(&book.file_path),
-            number,
-            book_pages::MAX_PAGE_BYTES,
-        )
+        book_pages::page(&book.format, &book.path, number, book_pages::MAX_PAGE_BYTES)
     })
     .await?;
     Ok(match page {
@@ -218,10 +205,8 @@ pub async fn get_cover(
     PathParams((kind, id)): PathParams<(CoverKind, i64)>,
     request: Request<Body>,
 ) -> Result<Response<Body>, AppErrors> {
-    let name = covers::cover_path(db, kind, id)
-        .await?
-        .ok_or(DatabaseError::EntryNotFound)?;
-    Ok(serve_file(&cover_files.path_of(&name), request).await)
+    let path = served_files::cover_file(db, &cover_files, kind, id).await?;
+    Ok(serve_file(&path, request).await)
 }
 
 /// Kick off a scan of every configured book directory.
@@ -377,15 +362,6 @@ pub async fn delete_library(
         return Err(DatabaseError::EntryNotFound.into());
     }
     Ok(StatusCode::NO_CONTENT)
-}
-
-async fn read_book(db: Arc<Database>, id: i64) -> Result<BookMetadata, AppErrors> {
-    db.read(move |conn| {
-        Ok(Database::get_entry_with_connection::<BookMetadata>(
-            conn, id,
-        )?)
-    })
-    .await
 }
 
 /// Runs a book's file or archive reading on Tokio's blocking pool.

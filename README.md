@@ -153,7 +153,7 @@ library or a series also need an admin (403 for a member). Implemented endpoints
 | `PUT` | `/api/v1/series/{id}/cover` | Show the cover of one of the series' books, from `{"book_id"}`; `204`, or `400 invalid_request` for a book of another series or one without a cover |
 | `DELETE` | `/api/v1/series/{id}/cover` | Back to the automatic cover, its first book's in reading order; `204` |
 | `GET` | `/api/v1/books/{id}` | One book's metadata |
-| `GET` | `/api/v1/books/{id}/file` | Stream the book file (supports `Range`) |
+| `GET` | `/api/v1/books/{id}/file` | Stream the book file (supports `Range`); `404 not_found` when it is gone, or the book lies in no added folder, or its file — symlinks followed — lies outside it. The two page routes answer the same |
 | `GET` | `/api/v1/books/{id}/pages` | The pages of an image-folder or CBZ book, `[{"number": 1}, …]`, in natural order of their file names; `404 not_found` for other formats |
 | `GET` | `/api/v1/books/{id}/pages/{number}` | One page's image, counted from 1 |
 | `GET` | `/api/v1/covers/{kind}/{id}` | The cover of a `book`, `series` or `library`; a series or library without its own shows its first book's, in reading order; `404 not_found` when there is none |

@@ -1731,22 +1731,15 @@ mod tests {
             path("The Long Road"),
             path("Gone.pdf"),
         );
+        let books = files.path().to_path_buf();
         let (pdf_book, folder_book, gone_book) = temp
             .db
             .setup_new_transaction(move |conn| {
-                let book = |format: &str, file_path: &str| {
-                    conn.execute(
-                        "INSERT INTO books (title, author, format, language, tags, file_path) \
-                         VALUES ('Book', 'Unknown Author', ?1, 'Unknown', '', ?2)",
-                        [format, file_path],
-                    )
-                    .unwrap();
-                    conn.last_insert_rowid()
-                };
+                let directory = insert_directory_row(conn, &books);
                 Ok((
-                    book("pdf", &pdf),
-                    book("image_comic", &folder),
-                    book("pdf", &gone),
+                    insert_book_file(conn, directory, "pdf", &pdf),
+                    insert_book_file(conn, directory, "image_comic", &folder),
+                    insert_book_file(conn, directory, "pdf", &gone),
                 ))
             })
             .unwrap();
@@ -1772,12 +1765,27 @@ mod tests {
         }
     }
 
-    /// A book of `format` at `file_path`, written with plain SQL; answers its id.
-    fn insert_book_file(conn: &rusqlite::Connection, format: &str, file_path: &str) -> i64 {
+    /// A directory row for `folder`, written with plain SQL; answers its id.
+    fn insert_directory_row(conn: &rusqlite::Connection, folder: &std::path::Path) -> i64 {
         conn.execute(
-            "INSERT INTO books (title, author, format, language, tags, file_path) \
-             VALUES ('Book', 'Unknown Author', ?1, 'Unknown', '', ?2)",
-            [format, file_path],
+            "INSERT INTO directories (path) VALUES (?1)",
+            [folder.to_string_lossy()],
+        )
+        .unwrap();
+        conn.last_insert_rowid()
+    }
+
+    /// A book of `format` at `file_path` in `directory`, written with plain SQL; answers its id.
+    fn insert_book_file(
+        conn: &rusqlite::Connection,
+        directory: impl Into<Option<i64>>,
+        format: &str,
+        file_path: &str,
+    ) -> i64 {
+        conn.execute(
+            "INSERT INTO books (title, author, format, language, tags, file_path, directory_id) \
+             VALUES ('Book', 'Unknown Author', ?1, 'Unknown', '', ?2, ?3)",
+            rusqlite::params![format, file_path, directory.into()],
         )
         .unwrap();
         conn.last_insert_rowid()
@@ -1799,12 +1807,14 @@ mod tests {
             folder.to_string_lossy().into_owned(),
             cbz.to_string_lossy().into_owned(),
         );
+        let books = files.path().to_path_buf();
         let (folder_book, cbz_book) = temp
             .db
             .setup_new_transaction(move |conn| {
+                let directory = insert_directory_row(conn, &books);
                 Ok((
-                    insert_book_file(conn, "image_comic", &folder),
-                    insert_book_file(conn, "cbz", &cbz),
+                    insert_book_file(conn, directory, "image_comic", &folder),
+                    insert_book_file(conn, directory, "cbz", &cbz),
                 ))
             })
             .unwrap();
@@ -1855,12 +1865,14 @@ mod tests {
             folder.to_string_lossy().into_owned(),
             cbz.to_string_lossy().into_owned(),
         );
+        let books = files.path().to_path_buf();
         let (folder_book, cbz_book) = temp
             .db
             .setup_new_transaction(move |conn| {
+                let directory = insert_directory_row(conn, &books);
                 Ok((
-                    insert_book_file(conn, "image_comic", &folder),
-                    insert_book_file(conn, "cbz", &cbz),
+                    insert_book_file(conn, directory, "image_comic", &folder),
+                    insert_book_file(conn, directory, "cbz", &cbz),
                 ))
             })
             .unwrap();
@@ -1905,14 +1917,16 @@ mod tests {
             path("Broken.cbz"),
             path("Gone"),
         );
+        let books = files.path().to_path_buf();
         let (folder_book, pdf_book, broken_book, gone_book) = temp
             .db
             .setup_new_transaction(move |conn| {
+                let directory = insert_directory_row(conn, &books);
                 Ok((
-                    insert_book_file(conn, "image_comic", &folder),
-                    insert_book_file(conn, "pdf", &pdf),
-                    insert_book_file(conn, "cbz", &broken),
-                    insert_book_file(conn, "image_comic", &gone),
+                    insert_book_file(conn, directory, "image_comic", &folder),
+                    insert_book_file(conn, directory, "pdf", &pdf),
+                    insert_book_file(conn, directory, "cbz", &broken),
+                    insert_book_file(conn, directory, "image_comic", &gone),
                 ))
             })
             .unwrap();
@@ -1970,6 +1984,57 @@ mod tests {
             let (status, _, body) = call(&app, authorized("GET", &uri, &member, None)).await;
             assert_eq!(status, expected_status, "{uri}");
             assert_eq!(json(&body), expected_body, "{uri}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_file_outside_where_the_server_serves_from_answers_404_json_on_every_route() {
+        let temp = TempDatabase::open();
+        let files = TempDir::new();
+        let path = |relative: &str| files.path().join(relative).to_string_lossy().into_owned();
+        files.write_cbz("books/Unplaced.cbz", &[("1.png", b"page")]);
+        files.write_cbz("elsewhere/Secret.cbz", &[("1.png", b"secret page")]);
+        files.write("elsewhere/secret.png", b"secret cover");
+        // A cover name that climbs out of the cover folder into `files`.
+        let climbing = format!(
+            "../{}/elsewhere/secret.png",
+            files.path().file_name().unwrap().to_string_lossy()
+        );
+        let (books, unplaced, outside) = (
+            files.path().join("books"),
+            path("books/Unplaced.cbz"),
+            path("elsewhere/Secret.cbz"),
+        );
+        let (unplaced_book, outside_book) = temp
+            .db
+            .setup_new_transaction(move |conn| {
+                let directory = insert_directory_row(conn, &books);
+                let outside_book = insert_book_file(conn, directory, "cbz", &outside);
+                conn.execute(
+                    "UPDATE books SET cover_image = ?1 WHERE id = ?2",
+                    rusqlite::params![climbing, outside_book],
+                )
+                .unwrap();
+                Ok((insert_book_file(conn, None, "cbz", &unplaced), outside_book))
+            })
+            .unwrap();
+        let member = logged_in(&temp, "bob", "member");
+        let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
+
+        let mut uris = vec![format!("/api/v1/covers/book/{outside_book}")];
+        for book in [unplaced_book, outside_book] {
+            for route in ["file", "pages", "pages/1"] {
+                uris.push(format!("/api/v1/books/{book}/{route}"));
+            }
+        }
+        for uri in uris {
+            let (status, _, body) = call(&app, authorized("GET", &uri, &member, None)).await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{uri}");
+            assert_eq!(
+                json(&body),
+                serde_json::json!({ "error": "not_found" }),
+                "{uri}"
+            );
         }
     }
 

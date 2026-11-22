@@ -9,7 +9,7 @@ entry. The adapters are [63](63-book-metadata.md) books, [64](64-manga-metadata.
 [65](65-comic-metadata.md) comics.
 
 ## Build
-- [ ] 1 h · Store the provider's external id, per the external-id decision, so an entry can be re-fetched without searching again (the TODO at the top of `api_caller/library.rs` asks for this link) [DB]
+- [ ] 1 h · Store the provider's external id, per the external-id decision, so an entry can be re-fetched without searching again [DB]
 - [ ] 1 h · Add an HTTP client with `rustls` features, matching the in-server TLS of [52](52-packaging-and-deployment.md); `serde_json` is already a dependency [BE]
 - [ ] 3 h · `MetadataProvider`: one adapter per source, chosen from the library's `library_type`, per the provider-chain decision — start with an `enum` and one `match` (an `async fn` trait isn't object-safe without `async-trait`) [BE]
 - [ ] 2 h · Title search through the library's provider, returning candidates without writing anything [BE]

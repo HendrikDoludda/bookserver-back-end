@@ -76,10 +76,15 @@ pub async fn scan_folder(
             .map_err(|_| FolderScannerError::FileNotFound)?
         {
             let entry_path = entry.path();
+            // The entry's own type, so a symlink is never followed: what it leads to may lie
+            // outside the directory, and a book read there would show its page 1 as a cover.
+            let Ok(kind) = entry.file_type().await else {
+                continue;
+            };
 
-            if entry_path.is_dir() {
+            if kind.is_dir() {
                 directories.push(entry_path);
-            } else {
+            } else if kind.is_file() {
                 let db = db.clone();
                 let covers = covers.clone();
                 let permit = semaphore
@@ -761,5 +766,48 @@ mod tests {
         ));
         assert_eq!(count(&temp.db, "series"), 0);
         assert_eq!(count(&temp.db, "books"), 0);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn the_scan_follows_no_symlink_out_of_its_directory() {
+        use std::os::unix::fs::symlink;
+
+        let books = TempDir::new();
+        let outside = TempDir::new();
+        let cover_folder = TempDir::new();
+        let temp = TempDatabase::open();
+        let kept = books.write_cbz("Berserk v01.cbz", &[("001.jpg", b"not a picture")]);
+        let private = outside.write_cbz("Private v01.cbz", &[("001.jpg", b"not a picture")]);
+        // The scan returns while its last file may still be read. Each folder holding a book
+        // also holds `zz/notes.txt`, read after the folder's own files, so that file is no book.
+        books.write("zz/notes.txt", b"not a book");
+        outside.write("zz/notes.txt", b"not a book");
+        symlink(&private, books.path().join("Leak v01.cbz")).unwrap();
+        symlink(outside.path(), books.path().join("Linked")).unwrap();
+        let directory = add_directory(&temp.db, books.path(), None);
+
+        scan_folder(
+            books.path().to_path_buf(),
+            Arc::clone(&temp.db),
+            directory,
+            covers_in(&cover_folder),
+        )
+        .await
+        .unwrap();
+
+        let stored: Vec<String> = temp
+            .db
+            .setup_new_transaction(|conn| {
+                Ok(conn
+                    .prepare("SELECT file_path FROM books")
+                    .unwrap()
+                    .query_map([], |row| row.get(0))
+                    .unwrap()
+                    .collect::<Result<_, _>>()
+                    .unwrap())
+            })
+            .unwrap();
+        assert_eq!(stored, [kept.to_string_lossy()]);
     }
 }
