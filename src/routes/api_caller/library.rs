@@ -12,12 +12,11 @@ use crate::{
     book_pages::{self, PageContent},
     data_models::books_model::{
         BookDetails, BookSummary, LibraryChanges, LibraryCoverChoice, LibrarySummary, NewLibrary,
-        PageSummary, ReadingModeChange, ReadingModeSetting, ScanReport, SeriesChanges,
-        SeriesCoverChoice, SeriesListing, SeriesSummary,
+        PageSummary, ReadingModeChange, ReadingModeSetting, SeriesChanges, SeriesCoverChoice,
+        SeriesListing, SeriesSummary,
     },
     db::Database,
     error_types::{AppErrors, DatabaseError, PageError},
-    folder_scanner::scan_all_folders,
     models::{BookMetadata, BookSeriesMetadata, DatabaseTypes, LibraryMetadata, WithId},
     routes::{covers::CoverKind, library_management, reading_modes, served_files},
     scanner::cover_image_retriever::Covers,
@@ -207,16 +206,6 @@ pub async fn get_cover(
 ) -> Result<Response<Body>, AppErrors> {
     let path = served_files::cover_file(db, &cover_files, kind, id).await?;
     Ok(serve_file(&path, request).await)
-}
-
-/// `POST /api/v1/scan`: scans every added folder and answers what it added, found stored already
-/// and couldn't read or store.
-pub async fn scan_all_directories(
-    _admin: AdminSession,
-    State(db): State<Arc<Database>>,
-    State(covers): State<Covers>,
-) -> Result<Json<ScanReport>, AppErrors> {
-    Ok(Json(scan_all_folders(db, covers).await?))
 }
 
 /// `POST /api/v1/libraries` with `{"name", "library_type", "description"?}`: answers 201 and the

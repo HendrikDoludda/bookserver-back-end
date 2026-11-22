@@ -14,5 +14,5 @@ library of its own; with it off, its series wait in no library until an admin ad
 - [x] 2 h · Adding a directory adopts the stored books without a directory that lie inside it — compared canonical, since `BOOK_DIRS` could be relative — and with the toggle on, their series join its library [BE]
 - [x] 1 h · Removing a directory deletes its books' rows and the series left without books; the files stay [BE]
 - [x] 2 h · Scan the directories from the table and stop reading `BOOK_DIRS`; a toggle-on directory's new series join its library [BE]
-- [ ] 2 h · Scan one directory: `POST /directories/{id}/scan` (answers 501 until then), through [34](34-directory-scanning.md)'s scan job; adding a directory queues its first scan [BE]
+- [x] 2 h · Scan one directory: `POST /directories/{id}/scan` (answers 501 until then), through [34](34-directory-scanning.md)'s scan job; adding a directory queues its first scan [BE]
 - [ ] 3 h · Add and remove directories in the app's Manage screen: the server path, the toggle with the library's name and type, and a confirmation before removing [FE]

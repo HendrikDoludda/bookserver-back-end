@@ -3,12 +3,15 @@ use std::sync::Arc;
 use axum::{extract::State, http::StatusCode, Json};
 
 use crate::{
-    data_models::books_model::{DirectorySummary, NewDirectory},
+    data_models::{
+        books_model::{DirectorySummary, NewDirectory},
+        scan_model::{ScanScope, ScanTrigger},
+    },
     db::Database,
     error_types::AppErrors,
     models::WithId,
     routes::directory_management,
-    scanner::cover_image_retriever::Covers,
+    scanner::{cover_image_retriever::Covers, scan_jobs::ScanJobs},
 };
 
 use super::extractors::{AdminSession, JsonBody, PathParams};
@@ -22,14 +25,19 @@ pub async fn list_directories(
 }
 
 /// `POST /api/v1/directories` with `{"path", "create_library", "library_type"?,
-/// "library_name"?}`: answers 201 and the folder, its path as stored.
+/// "library_name"?}`: answers 201 and the folder, its path as stored, and queues its first scan.
 pub async fn add_directory(
     _admin: AdminSession,
     State(db): State<Arc<Database>>,
     State(covers): State<Covers>,
+    State(scans): State<ScanJobs>,
     JsonBody(new): JsonBody<NewDirectory>,
 ) -> Result<(StatusCode, Json<WithId<DirectorySummary>>), AppErrors> {
     let directory = directory_management::add_directory(db, covers.folder, new).await?;
+    scans.queue(
+        ScanScope::directory(directory.id),
+        ScanTrigger::DirectoryAdded,
+    );
     Ok((StatusCode::CREATED, Json(directory)))
 }
 

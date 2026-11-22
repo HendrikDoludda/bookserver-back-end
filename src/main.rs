@@ -9,6 +9,7 @@ use bookserver_backend::routes::email_helper::Mailer;
 use bookserver_backend::routes::registration::SetupCode;
 use bookserver_backend::routes::totp_cipher::TotpCipher;
 use bookserver_backend::scanner::cover_image_retriever::{bind_pdfium, Covers};
+use bookserver_backend::scanner::scan_jobs::ScanJobs;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -45,6 +46,7 @@ async fn main() -> anyhow::Result<()> {
 
     let covers = Covers::in_folder(Path::new("./cover_images/"), bind_pdfium().map(Arc::new))
         .context("Failed to create the cover folder ./cover_images/")?;
+    let scans = ScanJobs::start(Arc::clone(&db), covers.clone());
 
     let state = AppState {
         db,
@@ -52,6 +54,7 @@ async fn main() -> anyhow::Result<()> {
         setup_code,
         totp_cipher,
         covers,
+        scans,
     };
 
     start_server(state, listen_address)

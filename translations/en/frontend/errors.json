@@ -37,6 +37,8 @@
   "password_too_short": "This password is too short.",
   "password_unchanged": "The new password is the same as the current one.",
   "passwords_do_not_match": "The passwords don't match.",
+  "scan_in_progress": "A scan is already running or waiting. Try again once it has finished.",
+  "@scan_in_progress": "The server runs one scan at a time, and refuses another while one runs or waits to run.",
   "series_not_empty": "This series still has books, so it can't be deleted.",
   "@series_not_empty": "A series empties once its files are gone from the scanned folders.",
   "too_many_attempts": "Too many attempts. Wait a moment, then try again.",

@@ -7,7 +7,6 @@ use std::{
     io,
     panic::{self, AssertUnwindSafe},
     path::{Path, PathBuf},
-    sync::Arc,
 };
 
 use blake3::Hasher;
@@ -18,13 +17,15 @@ use tracing::warn;
 use walkdir::WalkDir;
 
 use crate::book_pages;
-use crate::data_models::books_model::{ScanFailure, ScanProblem, ScanReport};
 use crate::data_models::models::{
     BookDatabaseColumns, BookFormat, BookLanguage, BookMetadata, BookSeriesMetadata, Directory,
     FileExtractedMetadata, ParsedName, QuerySeparator, SeriesLibraryConnection, WithId,
 };
+use crate::data_models::scan_model::{
+    ScanFailure, ScanProblem, ScanProgress, ScanReport, ScanScope,
+};
 use crate::db::Database;
-use crate::error_types::{AppErrors, DatabaseError, ScanError};
+use crate::error_types::{AppErrors, DatabaseError};
 use crate::scanner::comic_info;
 use crate::scanner::cover_image_retriever::{cover_for, Covers};
 
@@ -38,41 +39,48 @@ static CHAPTER_REGEX: Lazy<Regex> =
 static PAGE_REGEX: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?i)\b(?:p|pa|page)[ _]?(\d+)\b").unwrap());
 
-/// Scans every added directory and answers what it did, once its last book is written.
-pub async fn scan_all_folders(db: Arc<Database>, covers: Covers) -> Result<ScanReport, AppErrors> {
-    let directories = Arc::clone(&db)
-        .read(|conn| {
-            Ok(Database::get_all_entries_with_connection::<Directory>(
-                conn,
-            )?)
-        })
-        .await?;
-    let report = tokio::task::spawn_blocking(move || {
-        let mut report = ScanReport::default();
-        for directory in &directories {
-            scan_directory(&db, &covers, directory, &mut report);
-        }
-        report
-    })
-    .await
-    .map_err(|error| {
-        tracing::error!("the scan did not finish: {error}");
-        ScanError::TaskFailed
-    })?;
-    Ok(report)
-}
-
-/// Walks the directory and stores each book in it that isn't stored yet, adding to `report`.
-fn scan_directory(
+/// Scans the directories `scope` reads and answers what it did, once its last book is written.
+/// `progress` hears how many books the walk found, then how far the scan got after each book.
+pub fn scan(
     db: &Database,
     covers: &Covers,
-    directory: &WithId<Directory>,
-    report: &mut ScanReport,
-) {
-    let root = Path::new(&directory.data.path);
-    record(report, directory.id, root, walk(root), |found| {
-        store(db, covers, directory.id, found)
+    scope: &ScanScope,
+    progress: &mut dyn FnMut(ScanProgress),
+) -> Result<ScanReport, AppErrors> {
+    let directories: Vec<WithId<Directory>> = db
+        .get_all_entries::<Directory>()?
+        .into_iter()
+        .filter(|directory| scope.reads(directory.id))
+        .collect();
+    // Every directory is walked before any book is read, so the progress knows how many there are.
+    let walks: Vec<Walk> = directories
+        .iter()
+        .map(|directory| walk(Path::new(&directory.data.path)))
+        .collect();
+    let found = walks.iter().map(|walk| walk.books.len()).sum();
+    progress(ScanProgress {
+        found,
+        ..ScanProgress::default()
     });
+    let mut report = ScanReport::default();
+    for (directory, walk) in directories.iter().zip(walks) {
+        record(
+            &mut report,
+            directory.id,
+            Path::new(&directory.data.path),
+            walk,
+            |book| store(db, covers, directory.id, book),
+            |report| {
+                progress(ScanProgress {
+                    found,
+                    added: report.added,
+                    unchanged: report.unchanged,
+                    failed: report.failures.len(),
+                })
+            },
+        );
+    }
+    Ok(report)
 }
 
 /// A book file or an image folder that the walk found.
@@ -175,14 +183,16 @@ enum Stored {
     Unchanged,
 }
 
-/// Adds the walk's problems to `report`, then reads its books one at a time with `read`. A book
-/// that fails — or makes a library reading it panic — costs that book only.
+/// Adds the walk's problems to `report`, then reads its books one at a time with `read`, telling
+/// `after_each` the report so far. A book that fails — or makes a library reading it panic —
+/// costs that book only.
 fn record(
     report: &mut ScanReport,
     directory_id: i64,
     root: &Path,
     walk: Walk,
     mut read: impl FnMut(&Found) -> Result<Stored, ScanProblem>,
+    mut after_each: impl FnMut(&ScanReport),
 ) {
     let failure = |path: &Path, problem| ScanFailure {
         directory_id,
@@ -196,6 +206,7 @@ fn record(
     for (path, problem) in walk.problems {
         report.failures.push(failure(&path, problem));
     }
+    after_each(report);
     for found in &walk.books {
         let outcome = panic::catch_unwind(AssertUnwindSafe(|| read(found))).unwrap_or_else(|_| {
             warn!("reading {:?} panicked; the scan goes on", found.path);
@@ -206,6 +217,7 @@ fn record(
             Ok(Stored::Unchanged) => report.unchanged += 1,
             Err(problem) => report.failures.push(failure(&found.path, problem)),
         }
+        after_each(report);
     }
 }
 
@@ -385,6 +397,7 @@ fn hash_file(mut file: File) -> io::Result<String> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
     use std::time::SystemTime;
 
     use super::*;
@@ -943,6 +956,7 @@ mod tests {
                 }
                 store(&temp.db, &covers, directory, found)
             },
+            |_| {},
         );
 
         assert_eq!(
@@ -960,42 +974,79 @@ mod tests {
         assert!(series_of(&temp.db, &kept).is_some());
     }
 
-    #[tokio::test]
-    async fn a_scan_reports_each_directory_and_its_books_are_stored_when_it_returns() {
+    #[test]
+    fn a_scan_reads_its_scope_tells_its_progress_and_has_stored_its_books_when_it_returns() {
         let books = TempDir::new();
+        let others = TempDir::new();
         let elsewhere = TempDir::new();
         let cover_folder = TempDir::new();
         let temp = TempDatabase::open();
         let cbz = books.write_cbz("Berserk v01.cbz", &[("001.jpg", b"not a picture")]);
         books.write("Pluto/1.jpg", b"page");
+        others.write_cbz("Saga v01.cbz", &[("001.jpg", b"not a picture")]);
         let present = add_directory(&temp.db, books.path(), None);
         let missing = add_directory(&temp.db, &elsewhere.path().join("gone"), None);
+        add_directory(&temp.db, others.path(), None);
         let covers = covers_in(&cover_folder);
-        let report = |added, unchanged| ScanReport {
-            added,
-            unchanged,
-            failures: vec![ScanFailure {
-                directory_id: missing,
-                relative_path: String::new(),
-                error_key: ScanProblem::DirectoryMissing,
-            }],
+        let gone = ScanFailure {
+            directory_id: missing,
+            relative_path: String::new(),
+            error_key: ScanProblem::DirectoryMissing,
         };
+        let mut heard = Vec::new();
 
-        let first = scan_all_folders(Arc::clone(&temp.db), covers.clone())
-            .await
-            .unwrap();
-        assert_eq!(first, report(2, 0));
+        let first = scan(
+            &temp.db,
+            &covers,
+            &ScanScope::Directories(BTreeSet::from([present, missing])),
+            &mut |progress| heard.push(progress),
+        )
+        .unwrap();
+
+        assert_eq!(
+            first,
+            ScanReport {
+                added: 2,
+                unchanged: 0,
+                failures: vec![gone.clone()],
+            }
+        );
+        assert_eq!(
+            (heard.first(), heard.last()),
+            (
+                Some(&ScanProgress {
+                    found: 2,
+                    ..ScanProgress::default()
+                }),
+                Some(&ScanProgress {
+                    found: 2,
+                    added: 2,
+                    unchanged: 0,
+                    failed: 1,
+                })
+            )
+        );
         assert_eq!(directory_of(&temp.db, &cbz), Some(present));
         assert_eq!(
             directory_of(&temp.db, &books.path().join("Pluto")),
             Some(present)
         );
+        assert_eq!(
+            count(&temp.db, "books"),
+            2,
+            "the third directory was not in scope"
+        );
 
-        let second = scan_all_folders(Arc::clone(&temp.db), covers)
-            .await
-            .unwrap();
-        assert_eq!(second, report(0, 2));
-        assert_eq!(count(&temp.db, "books"), 2);
+        let second = scan(&temp.db, &covers, &ScanScope::All, &mut |_| {}).unwrap();
+
+        assert_eq!(
+            second,
+            ScanReport {
+                added: 1,
+                unchanged: 2,
+                failures: vec![gone],
+            }
+        );
     }
 
     #[test]

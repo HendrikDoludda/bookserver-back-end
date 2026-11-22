@@ -120,17 +120,18 @@ impl IntoResponse for DatabaseError {
     }
 }
 
-/// A scan of the added folders. What it couldn't read goes into its report, not here.
+/// Asking for a scan of the added folders. What a scan couldn't read goes into its report, not
+/// here.
 #[derive(Error, Debug)]
 pub enum ScanError {
-    #[error("The scan did not finish")]
-    TaskFailed,
+    #[error("A scan runs or waits already")]
+    InProgress,
 }
 
 impl ScanError {
     fn status_and_key(&self) -> (StatusCode, &'static str) {
         match self {
-            ScanError::TaskFailed => INTERNAL,
+            ScanError::InProgress => (StatusCode::CONFLICT, "scan_in_progress"),
         }
     }
 }
@@ -756,6 +757,11 @@ mod tests {
                 "directory_overlaps",
             ),
             (
+                ScanError::InProgress.into(),
+                StatusCode::CONFLICT,
+                "scan_in_progress",
+            ),
+            (
                 DatabaseError::EntryNotFound.into(),
                 StatusCode::NOT_FOUND,
                 "not_found",
@@ -838,7 +844,6 @@ mod tests {
             DatabaseError::OperationCommitFailure.into(),
             DatabaseError::InvalidParameters.into(),
             DirectoryError::TaskFailed.into(),
-            ScanError::TaskFailed.into(),
             TranslationError::MissingText {
                 key: "email.verify_email.body".to_string(),
             }

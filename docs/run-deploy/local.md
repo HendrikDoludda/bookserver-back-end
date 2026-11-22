@@ -12,6 +12,7 @@
 | `add-directory` | `curl -X POST http://localhost:8080/api/v1/directories -H 'Authorization: Bearer PASTE_SESSION_TOKEN' -H 'Content-Type: application/json' -d '{"path":"PASTE_FOLDER","create_library":true,"library_type":"books"}' -w '\n'` |
 | `directories` | `curl http://localhost:8080/api/v1/directories -H 'Authorization: Bearer PASTE_SESSION_TOKEN' -w '\n'` |
 | `scan` | `curl -X POST http://localhost:8080/api/v1/scan -H 'Authorization: Bearer PASTE_SESSION_TOKEN' -w '\n'` |
+| `scan-status` | `curl http://localhost:8080/api/v1/scan/status -H 'Authorization: Bearer PASTE_SESSION_TOKEN' -w '\n'` |
 
 ## Run
 1. For PDFs: put the PDFium shared library (`libpdfium.dylib`, `libpdfium.so` or `pdfium.dll`, prebuilt at [bblanchon/pdfium-binaries](https://github.com/bblanchon/pdfium-binaries)) in the working directory or on the library path — build 7543 or newer, see the `pdfium-render` line in `Cargo.toml`.
@@ -19,5 +20,5 @@
 3. To read the server's mail while testing, start Mailpit in a second terminal — [`mailpit`](#commands) — and start the server with [`run-mail`](#commands) instead. Every mail shows up at http://localhost:8025.
 4. Check that it answers — [`health`](#commands).
 5. Sign up the first account — [`sign-up`](#commands), with `PASTE_SETUP_CODE` from the server's start log. It becomes the admin; its answer's `session_token` is good for 15 minutes, and [`login`](#commands) gives a new one.
-6. Add each book folder — [`add-directory`](#commands), with the admin's `session_token` and the folder's full path. With `create_library` false, its series join no library; [`directories`](#commands) lists the added folders.
-7. Catalog them — [`scan`](#commands).
+6. Add each book folder — [`add-directory`](#commands), with the admin's `session_token` and the folder's full path; its first scan starts by itself. With `create_library` false, its series join no library; [`directories`](#commands) lists the added folders.
+7. Follow the scan — [`scan-status`](#commands): `current` shows how far it got, and `last` how the last one ended and what it couldn't read. To scan every folder again — [`scan`](#commands).

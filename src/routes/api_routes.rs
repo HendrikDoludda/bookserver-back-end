@@ -25,9 +25,10 @@ use crate::{
             delete_library, delete_series, get_cover, get_libraries, get_page, get_pages,
             get_series_children, get_series_in_library, list_series, remove_series_from_library,
             request_file, reset_library_cover, reset_series_cover, retrieve_metadata,
-            scan_all_directories, set_reading_mode, update_library, update_series,
+            set_reading_mode, update_library, update_series,
         },
         locales::{get_translations, list_locales},
+        scans::{scan_all_directories, scan_directory, scan_status},
         settings::{get_settings, replace_settings},
         totp::{
             disable_totp, finalize_totp_set_up, renew_totp_recovery_codes, sign_in_totp,
@@ -89,10 +90,10 @@ pub fn set_up_routes() -> Router<AppState> {
         )
         .route("/covers/{kind}/{id}", get(get_cover))
         .route("/scan", post(scan_all_directories))
-        .route("/scan/status", get(not_implemented))
+        .route("/scan/status", get(scan_status))
         .route("/directories", get(list_directories).post(add_directory))
         .route("/directories/{id}", delete(remove_directory))
-        .route("/directories/{id}/scan", post(not_implemented))
+        .route("/directories/{id}/scan", post(scan_directory))
         .route("/metadata/scan", post(not_implemented))
         .route("/search", get(not_implemented))
         .route("/auth/register", post(sign_up))
@@ -312,8 +313,6 @@ mod tests {
         for (method, uri) in [
             ("GET", "/api/v1/books/1/progress"),
             ("PATCH", "/api/v1/books/1/progress"),
-            ("GET", "/api/v1/scan/status"),
-            ("POST", "/api/v1/directories/1/scan"),
             ("POST", "/api/v1/metadata/scan"),
             ("GET", "/api/v1/search"),
         ] {
@@ -2995,7 +2994,9 @@ mod tests {
                 Ok(conn.last_insert_rowid())
             })
             .unwrap();
-        let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
+        let state = temp.state(Mailer::Disabled);
+        let scans = state.scans.clone();
+        let app = set_up_routes().with_state(state);
         let delete = format!("/api/v1/libraries/{library}");
         let libraries = |temp: &TempDatabase| -> i64 {
             temp.db
@@ -3007,7 +3008,12 @@ mod tests {
                 .unwrap()
         };
 
-        for (method, uri) in [("POST", "/api/v1/scan"), ("DELETE", delete.as_str())] {
+        for (method, uri) in [
+            ("POST", "/api/v1/scan"),
+            ("GET", "/api/v1/scan/status"),
+            ("POST", "/api/v1/directories/1/scan"),
+            ("DELETE", delete.as_str()),
+        ] {
             let (status, _, body) = call(&app, authorized(method, uri, &member, None)).await;
             assert_eq!(status, StatusCode::FORBIDDEN, "{method} {uri}");
             assert_eq!(json(&body), serde_json::json!({ "error": "forbidden" }));
@@ -3031,24 +3037,141 @@ mod tests {
             })
             .unwrap();
         let (status, _, body) = call(&app, authorized("POST", "/api/v1/scan", &admin, None)).await;
-        assert_eq!(status, StatusCode::OK);
+        assert_eq!(status, StatusCode::ACCEPTED);
         assert_eq!(
             json(&body),
             serde_json::json!({
-                "added": 1,
-                "unchanged": 0,
-                "failures": [{
+                "state": "idle",
+                "current": null,
+                "pending": { "scope": "all", "triggers": ["request"] },
+                "last": null,
+            }),
+            "answered while the scan still waits"
+        );
+
+        scans.idle().await;
+        let (status, _, body) =
+            call(&app, authorized("GET", "/api/v1/scan/status", &admin, None)).await;
+        assert_eq!(status, StatusCode::OK);
+        let status = json(&body);
+        assert_eq!(
+            (&status["state"], &status["current"], &status["pending"]),
+            (
+                &serde_json::json!("idle"),
+                &serde_json::Value::Null,
+                &serde_json::Value::Null
+            )
+        );
+        let last = &status["last"];
+        for (field, expected) in [
+            ("scope", serde_json::json!("all")),
+            ("triggers", serde_json::json!(["request"])),
+            ("outcome", serde_json::json!("completed")),
+            ("added", serde_json::json!(1)),
+            ("unchanged", serde_json::json!(0)),
+            ("failure_count", serde_json::json!(1)),
+            (
+                "failures",
+                serde_json::json!([{
                     "directory_id": gone_directory,
                     "relative_path": "",
                     "error_key": "directory_missing"
-                }]
-            })
-        );
+                }]),
+            ),
+        ] {
+            assert_eq!(last[field], expected, "{field}");
+        }
+        assert!(last["finished_at"].as_i64() >= last["started_at"].as_i64());
         assert_eq!(libraries(&temp), 1, "a scan makes no library");
 
         let (status, _, _) = call(&app, authorized("DELETE", &delete, &admin, None)).await;
         assert_eq!(status, StatusCode::NO_CONTENT);
         assert_eq!(libraries(&temp), 0);
+    }
+
+    #[tokio::test]
+    async fn a_scan_asked_for_while_another_waits_answers_409_json() {
+        let temp = TempDatabase::open();
+        let admin = logged_in(&temp, "alice", "admin");
+        let directory = temp
+            .db
+            .setup_new_transaction(|conn| {
+                conn.execute("INSERT INTO directories (path) VALUES ('/books')", [])
+                    .unwrap();
+                Ok(conn.last_insert_rowid())
+            })
+            .unwrap();
+        // No worker, so the first scan waits for as long as the test runs.
+        let mut state = temp.state(Mailer::Disabled);
+        state.scans = crate::scanner::scan_jobs::ScanJobs::without_worker();
+        let app = set_up_routes().with_state(state);
+        let one_folder = format!("/api/v1/directories/{directory}/scan");
+        let waiting = serde_json::json!({
+            "scope": { "directories": [directory] },
+            "triggers": ["request"],
+        });
+
+        let (status, _, body) = call(&app, authorized("POST", &one_folder, &admin, None)).await;
+        assert_eq!(status, StatusCode::ACCEPTED);
+        assert_eq!(json(&body)["pending"], waiting);
+
+        for uri in ["/api/v1/scan", one_folder.as_str()] {
+            let (status, _, body) = call(&app, authorized("POST", uri, &admin, None)).await;
+            assert_eq!(status, StatusCode::CONFLICT, "{uri}");
+            assert_eq!(
+                json(&body),
+                serde_json::json!({ "error": "scan_in_progress" }),
+                "{uri}"
+            );
+        }
+        let (status, _, body) = call(
+            &app,
+            authorized("POST", "/api/v1/directories/999/scan", &admin, None),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(json(&body), serde_json::json!({ "error": "not_found" }));
+        let (_, _, body) = call(&app, authorized("GET", "/api/v1/scan/status", &admin, None)).await;
+        assert_eq!(json(&body)["pending"], waiting, "still the one scan");
+    }
+
+    #[tokio::test]
+    async fn an_added_folder_is_scanned_by_itself() {
+        let temp = TempDatabase::open();
+        let admin = logged_in(&temp, "alice", "admin");
+        let files = TempDir::new();
+        files.write_cbz("Manga/Berserk v01.cbz", &[("001.jpg", b"not a picture")]);
+        let state = temp.state(Mailer::Disabled);
+        let scans = state.scans.clone();
+        let app = set_up_routes().with_state(state);
+        let body = serde_json::json!({
+            "path": files.path().join("Manga").to_string_lossy(),
+            "create_library": true,
+            "library_type": "comics",
+        });
+
+        let (status, _, added) = call(
+            &app,
+            authorized("POST", "/api/v1/directories", &admin, Some(body)),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+        scans.idle().await;
+
+        let (_, _, libraries) =
+            call(&app, authorized("GET", "/api/v1/libraries", &admin, None)).await;
+        assert_eq!(json(&libraries)[0]["series_count"], 1, "its book's series");
+        let (_, _, status) =
+            call(&app, authorized("GET", "/api/v1/scan/status", &admin, None)).await;
+        let last = &json(&status)["last"];
+        assert_eq!(
+            (&last["scope"], &last["triggers"], &last["added"]),
+            (
+                &serde_json::json!({ "directories": [json(&added)["id"]] }),
+                &serde_json::json!(["directory_added"]),
+                &serde_json::json!(1)
+            )
+        );
     }
 
     #[tokio::test]

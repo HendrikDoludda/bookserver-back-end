@@ -27,6 +27,7 @@
   "password_too_short": "Dieses Passwort ist zu kurz.",
   "password_unchanged": "Das neue Passwort ist dasselbe wie das aktuelle.",
   "passwords_do_not_match": "Die Passwörter stimmen nicht überein.",
+  "scan_in_progress": "Ein Scan läuft bereits oder wartet. Versuche es noch einmal, wenn er fertig ist.",
   "series_not_empty": "Diese Serie enthält noch Bücher und kann deshalb nicht gelöscht werden.",
   "too_many_attempts": "Zu viele Versuche. Warte einen Moment und versuche es dann noch einmal.",
   "totp_already_enabled": "Die Zwei-Faktor-Authentifizierung ist bereits aktiv.",

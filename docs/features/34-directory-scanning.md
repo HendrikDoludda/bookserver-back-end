@@ -4,11 +4,11 @@ State: in progress
 
 The scanner walks the scannable directories ([35](35-scannable-directories.md)), parses volume /
 chapter / page numbers out of file names, and creates the book and series rows plus a cover for
-each supported file, reporting what it couldn't read. A scan still holds its request open until it
-ends, and never picks up a file that changed.
+each supported file, reporting what it couldn't read. Scans run in the background, one at a time;
+none picks up a file that changed yet.
 
 ## Build
-- [ ] 6 h · Run every scan as a job through one worker that takes requests from a queue: `POST /scan` answers 202, or 409 `scan_in_progress` while a scan runs or waits; `GET /scan/status` (answers 501 until then, admin only) reports progress, counts and per-file failures, held in memory; queued requests merge. The worker's handle joins `AppState` [BE]
+- [x] 6 h · Run every scan as a job through one worker that takes requests from a queue: `POST /scan` answers 202, or 409 `scan_in_progress` while a scan runs or waits; `GET /scan/status` (answers 501 until then, admin only) reports progress, counts and per-file failures, held in memory; queued requests merge. The worker's handle joins `AppState` [BE]
 - [x] 1 h · A scan counts as done only once its last book is written — `scan_folder` drops the `JoinHandle`s today, so the last file can still be in progress when it reports success; the walk runs in one `spawn_blocking` that returns its report, with no per-file tasks to wait for [BE]
 - [x] 2 h · Report per-file failures instead of discarding them — only a task panic is logged; `create_book_entry`'s own errors disappear. A failure carries the directory, the path relative to it and an error key; each book runs inside `catch_unwind`, so a panic costs that file only [BE]
 - [x] 2 h · `create_book_entry` creates a file's series before its cover step and book insert, so a file whose cover step panics (a PDF without PDFium, [36](36-covers.md)) or whose insert fails leaves an empty series behind — extract the cover first, then create the series, link it and insert the book in one transaction, so a failure leaves none of them [BE]

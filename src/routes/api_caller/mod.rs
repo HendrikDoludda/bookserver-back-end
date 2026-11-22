@@ -7,6 +7,7 @@ pub mod extractors;
 pub mod helpers;
 pub mod library;
 pub mod locales;
+pub mod scans;
 pub mod settings;
 pub mod totp;
 pub mod users;
