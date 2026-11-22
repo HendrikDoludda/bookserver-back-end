@@ -124,7 +124,7 @@ again for a new one).
 | --- | --- | --- |
 | `DATA_DIR` | the OS's data folder | The folder for the database, the covers and `secrets.toml`; made if missing |
 | `PORT` | `8080` | The port to listen on, 1–65535 |
-| `BIND_ADDRESS` | `0.0.0.0` | The IP address to listen on — every interface by default; `127.0.0.1` behind `tailscale serve` |
+| `BIND_ADDRESS` | `127.0.0.1` | The IP address to listen on — this computer only by default, which `tailscale serve` forwards to; `0.0.0.0` for every network |
 | `SMTP_HOST` | unset | Mail server for verification and password-reset codes; email is off while unset |
 | `SMTP_PORT`, `SMTP_FROM`, `SMTP_FROM_NAME` | unset | Required once `SMTP_HOST` is set |
 | `SMTP_USERNAME`, `SMTP_PASSWORD` | unset | The mail server's login, set together; leave both out for a server without one |

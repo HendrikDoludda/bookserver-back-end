@@ -121,4 +121,4 @@
 
 ## Hosting
 - A home server on the LAN, reached remotely only through Tailscale — never public port-forwarding. Hardening that only matters on the open internet lives in [54](features/54-public-exposure-hardening.md).
-- HTTPS ends at a TLS proxy in front of the server — `tailscale serve` ([run-deploy](run-deploy/tailscale.md)); the server speaks plain HTTP on `BIND_ADDRESS`, `127.0.0.1` behind the proxy, so the LAN gets no plain connection.
+- HTTPS ends at a TLS proxy in front of the server — `tailscale serve` ([run-deploy](run-deploy/tailscale.md)); the server speaks plain HTTP on `BIND_ADDRESS`, by default `127.0.0.1`, so the LAN gets no plain connection.

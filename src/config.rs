@@ -160,7 +160,7 @@ fn create_new_set_up_secrets() -> Result<Secrets, ApplicationSetUpErrors> {
     Ok(secret)
 }
 
-/// Where the server listens: `BIND_ADDRESS` (default `0.0.0.0`, every interface) and `PORT`
+/// Where the server listens: `BIND_ADDRESS` (default `127.0.0.1`, this computer only) and `PORT`
 /// (default 8080). A value that isn't an IP address or a port is an error naming its setting.
 pub fn get_listen_address() -> Result<SocketAddr, ApplicationSetUpErrors> {
     listen_address_from(|name| env::var(name).ok())
@@ -173,7 +173,9 @@ fn listen_address_from(
     let setting = |name: &'static str| lookup(name).filter(|value| !value.trim().is_empty());
 
     let address = match setting("BIND_ADDRESS") {
-        None => IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+        // The server speaks plain HTTP: other devices reach it through `tailscale serve`, which
+        // forwards to this address, so by default nothing on the network gets a plain connection.
+        None => IpAddr::V4(Ipv4Addr::LOCALHOST),
         Some(value) => value
             .parse()
             .map_err(|_| ApplicationSetUpErrors::InvalidSetting("BIND_ADDRESS"))?,
@@ -379,9 +381,9 @@ mod tests {
     }
 
     #[test]
-    fn without_settings_the_server_listens_on_every_interface_at_8080() {
+    fn without_settings_the_server_listens_on_this_computer_only_at_8080() {
         for settings in [vec![], vec![("BIND_ADDRESS", " "), ("PORT", "")]] {
-            assert_eq!(listen(&settings).unwrap().to_string(), "0.0.0.0:8080");
+            assert_eq!(listen(&settings).unwrap().to_string(), "127.0.0.1:8080");
         }
     }
 
@@ -389,6 +391,7 @@ mod tests {
     fn an_ipv4_or_ipv6_address_and_a_port_are_listened_on() {
         for (address, expected) in [
             ("127.0.0.1", "127.0.0.1:8443"),
+            ("0.0.0.0", "0.0.0.0:8443"),
             ("100.101.102.103", "100.101.102.103:8443"),
             ("::1", "[::1]:8443"),
             ("::", "[::]:8443"),

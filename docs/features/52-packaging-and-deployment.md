@@ -12,7 +12,7 @@ Ship the server as a Docker image, a macOS `.dmg` and a Windows `.exe`, keeping
 - [ ] 1 h · Settings for the certificate and key paths [BE]
 - [ ] 2 h · Pick up a renewed certificate without a restart (`RustlsConfig::reload_from_pem_file`), triggered per the reload decision [BE]
 - [ ] ? h · The desktop installs show the setup code the first sign-up needs ([27](27-registration-and-email-verification.md)) — an app started from Finder or the Start menu has no visible log [BE]
-- [ ] ? h · Docker image with a persistent volume for the data folder (`DATA_DIR`, [85](85-downloadable-builds.md)) [BE]
+- [ ] ? h · Docker image with a persistent volume for the data folder (`DATA_DIR`, [85](85-downloadable-builds.md)), and `BIND_ADDRESS=0.0.0.0` — a published port reaches the container's network interface, not its `127.0.0.1` [BE]
 - [ ] ? h · Publish the Docker image for each version, per the registry decision, with 85's terms note [BE]
 - [ ] ? h · macOS `.dmg`, unsigned for now — macOS refuses the first launch until it is allowed in System Settings → Privacy & Security; signing comes with [76](76-release-pipeline.md) [BE]
 - [ ] ? h · Windows `.exe`, unsigned for now — SmartScreen warns before the first launch; signing comes with [76](76-release-pipeline.md) [BE]

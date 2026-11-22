@@ -13,7 +13,7 @@ server stay in [52](52-packaging-and-deployment.md).
 - [x] 0.5 h · Log the version (`Cargo.toml`'s) and the data folder at start [BE]
 - [x] 1 h · The fallback cover `example-cover.png` is compiled into the binary and written into the cover folder when it is missing [BE]
 - [x] 1 h · Bind PDFium from the binary's folder first, then the working directory, then the system's library path [BE]
-- [ ] 0.5 h · `BIND_ADDRESS` defaults to `127.0.0.1` [BE]
+- [x] 0.5 h · `BIND_ADDRESS` defaults to `127.0.0.1` [BE]
 - [ ] 0.5 h · SQLite compiled into the binary (`rusqlite` feature `bundled`) [BE]
 - [ ] 2 h · Licence check and notices: `cargo about` accepts only the licences listed in `about.toml` and renders `THIRD_PARTY_LICENSES.html` [BE]
 - [ ] 1 h · `packaging/README.txt`, shipped in every download: starting the server on each OS, the setup code, the data folder and the settings, `tailscale serve`, and the terms — you may download and run this build to try it out; all other rights reserved [BE]
