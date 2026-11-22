@@ -2,8 +2,8 @@
 
 State: blocked
 
-**Blocked:** needs the `.dmg` / `.exe` packaging and a data directory outside the app bundle
-([Packaging & deployment](52-packaging-and-deployment.md)), plus the
+**Blocked:** needs the `.dmg` / `.exe` packaging ([Packaging & deployment](52-packaging-and-deployment.md)),
+the data folder outside the app bundle ([Downloadable builds](85-downloadable-builds.md)), plus the
 [release pipeline](76-release-pipeline.md).
 
 Plex-style updates for the desktop installs: a native notification when a new version is out,

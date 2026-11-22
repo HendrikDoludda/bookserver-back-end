@@ -40,6 +40,7 @@
 | Manga metadata | 3 | not started | [64-manga-metadata](features/64-manga-metadata.md) |
 | Comic metadata | 3 | not started | [65-comic-metadata](features/65-comic-metadata.md) |
 | Manual metadata editing | 3 | not started | [66-manual-metadata-editing](features/66-manual-metadata-editing.md) |
+| Downloadable builds | 3 | in progress | [85-downloadable-builds](features/85-downloadable-builds.md) |
 | File upload & ingestion | 4 | not started | [05-uploads-and-ingestion](features/05-uploads-and-ingestion.md) |
 | Backend admin web view | 4 | not started | [06-admin-web-view](features/06-admin-web-view.md) |
 | Theming & branding | 4 | not started | [08-theming-and-branding](features/08-theming-and-branding.md) |
