@@ -77,9 +77,6 @@ pub enum DatabaseError {
     #[error("Statement Query has failed")]
     QueryFailure,
 
-    #[error("Retrieving Id has failed")]
-    IdRetrievalFailure,
-
     #[error("Failed to create a transaction")]
     TransactionFailure,
 
@@ -109,7 +106,6 @@ impl DatabaseError {
             | DatabaseError::TaskPreparationFailure
             | DatabaseError::NextRowFailure
             | DatabaseError::QueryFailure
-            | DatabaseError::IdRetrievalFailure
             | DatabaseError::TransactionFailure
             | DatabaseError::OperationFailure
             | DatabaseError::OperationCommitFailure
@@ -124,34 +120,19 @@ impl IntoResponse for DatabaseError {
     }
 }
 
+/// A scan of the added folders. What it couldn't read goes into its report, not here.
 #[derive(Error, Debug)]
-pub enum FolderScannerError {
-    #[error("File type not recognized")]
-    FileTypeNotRecognized,
+pub enum ScanError {
+    #[error("The scan did not finish")]
+    TaskFailed,
+}
 
-    #[error("File Not Found")]
-    FileNotFound,
-
-    #[error("Metadata extraction failed")]
-    MetadataExtractionFailed,
-
-    #[error("System does not support getting modified file information")]
-    UnsupportedOperatingSystem,
-
-    #[error("File Hashing Failed")]
-    FileHashingFailed,
-
-    #[error("Could not insert book entry into the database")]
-    BookInsertionFailed,
-
-    #[error("Could not insert series entry into the database")]
-    SeriesInsertionFailed,
-
-    #[error("Directory not found")]
-    MissingDirectory,
-
-    #[error("Permit creation failed")]
-    PermitCreationFailed,
+impl ScanError {
+    fn status_and_key(&self) -> (StatusCode, &'static str) {
+        match self {
+            ScanError::TaskFailed => INTERNAL,
+        }
+    }
 }
 
 #[derive(Error, Debug)]
@@ -532,6 +513,8 @@ pub enum AppErrors {
     Library(#[from] LibraryError),
     #[error(transparent)]
     Directory(#[from] DirectoryError),
+    #[error(transparent)]
+    Scan(#[from] ScanError),
     #[error("The request's body, path or query could not be read")]
     InvalidRequest,
 }
@@ -548,6 +531,7 @@ impl AppErrors {
             AppErrors::ReadingMode(err) => err.status_and_key(),
             AppErrors::Library(err) => err.status_and_key(),
             AppErrors::Directory(err) => err.status_and_key(),
+            AppErrors::Scan(err) => err.status_and_key(),
             AppErrors::InvalidRequest => (StatusCode::BAD_REQUEST, "invalid_request"),
         }
     }
@@ -849,12 +833,12 @@ mod tests {
             DatabaseError::TaskPreparationFailure.into(),
             DatabaseError::NextRowFailure.into(),
             DatabaseError::QueryFailure.into(),
-            DatabaseError::IdRetrievalFailure.into(),
             DatabaseError::TransactionFailure.into(),
             DatabaseError::OperationFailure.into(),
             DatabaseError::OperationCommitFailure.into(),
             DatabaseError::InvalidParameters.into(),
             DirectoryError::TaskFailed.into(),
+            ScanError::TaskFailed.into(),
             TranslationError::MissingText {
                 key: "email.verify_email.body".to_string(),
             }

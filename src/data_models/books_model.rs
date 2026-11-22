@@ -117,6 +117,45 @@ impl From<Directory> for DirectorySummary {
     }
 }
 
+/// What a scan did, as an admin gets it.
+#[derive(Debug, Default, PartialEq, Serialize)]
+pub struct ScanReport {
+    /// Books this scan stored.
+    pub added: usize,
+    /// Books found stored already, left as they are.
+    pub unchanged: usize,
+    /// What couldn't be read or stored: per directory, the folders the walk couldn't read, then
+    /// the books.
+    pub failures: Vec<ScanFailure>,
+}
+
+/// A folder or a book a scan couldn't read or store.
+#[derive(Debug, PartialEq, Serialize)]
+pub struct ScanFailure {
+    pub directory_id: i64,
+    /// Relative to the directory; empty for the directory itself.
+    pub relative_path: String,
+    pub error_key: ScanProblem,
+}
+
+/// Why a scan skipped a whole directory, a folder in it, or a book.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScanProblem {
+    /// The directory's folder is gone, as on an unplugged drive.
+    DirectoryMissing,
+    /// The directory's folder can't be read — macOS privacy settings keep some folders closed.
+    DirectoryUnreadable,
+    /// A folder inside the directory can't be read; the rest of it is scanned.
+    FolderUnreadable,
+    /// The book's file can't be opened or read to its end.
+    FileUnreadable,
+    /// The database didn't store the book; nothing of it was kept.
+    StoreFailed,
+    /// A library reading the book panicked.
+    Panicked,
+}
+
 /// `PUT /api/v1/series/{id}/cover`: the book whose cover the series shows.
 #[derive(Debug, Deserialize)]
 pub struct SeriesCoverChoice {

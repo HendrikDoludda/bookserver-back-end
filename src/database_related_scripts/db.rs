@@ -8,9 +8,7 @@ use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::{Connection, OptionalExtension, Result, ToSql, TransactionBehavior};
 use serde::Serialize;
 
-use crate::data_models::models::{
-    ColumnSelector, Comparison, DatabaseTypes, QuerySeparator, WithId,
-};
+use crate::data_models::models::{Comparison, DatabaseTypes, QuerySeparator, WithId};
 use crate::database_related_scripts::{
     db_delete::Delete, db_search::Search, db_update::Update, extract::Extract, insert::Insert,
     migrations, translation_seed,
@@ -674,50 +672,6 @@ impl Database {
             "library_elements",
             DatabaseError::QueryFailure,
         ))
-    }
-
-    /// Looks up a row id by a single column value.
-    /// Legacy: new code should not use this; it remains for the folder scanner.
-    pub fn get_id_from_table(
-        &self,
-        db_type: DatabaseTypes,
-        column: impl Into<ColumnSelector>,
-        value_to_search_for: &dyn rusqlite::ToSql,
-    ) -> Result<Option<i64>, DatabaseError> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|_| DatabaseError::PoolConnectionRetrievalFailure)?;
-        let table_name = db_type.get_table_name();
-        let column_name = match column.into() {
-            ColumnSelector::Book(col) => col.as_ref().to_string(),
-            ColumnSelector::Library(col) => col.as_ref().to_string(),
-            ColumnSelector::Series(col) => col.as_ref().to_string(),
-            ColumnSelector::User(col) => col.as_ref().to_string(),
-        };
-        let query = format!("SELECT id FROM {} WHERE {} = ?1", table_name, column_name);
-        let mut stmt = conn.prepare(&query).map_err(logged(
-            "reading",
-            table_name,
-            DatabaseError::TaskPreparationFailure,
-        ))?;
-        let mut rows = stmt
-            .query(rusqlite::params![value_to_search_for])
-            .map_err(logged("reading", table_name, DatabaseError::QueryFailure))?;
-
-        if let Some(row) =
-            rows.next()
-                .map_err(logged("reading", table_name, DatabaseError::NextRowFailure))?
-        {
-            let id: i64 = row.get(0).map_err(logged(
-                "reading",
-                table_name,
-                DatabaseError::IdRetrievalFailure,
-            ))?;
-            Ok(Some(id))
-        } else {
-            Ok(None)
-        }
     }
 
     /// Runs `operation` inside a single SQLite transaction. It commits if the closure

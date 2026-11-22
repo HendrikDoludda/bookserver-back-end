@@ -12,11 +12,11 @@ use crate::{
     book_pages::{self, PageContent},
     data_models::books_model::{
         BookDetails, BookSummary, LibraryChanges, LibraryCoverChoice, LibrarySummary, NewLibrary,
-        PageSummary, ReadingModeChange, ReadingModeSetting, SeriesChanges, SeriesCoverChoice,
-        SeriesListing, SeriesSummary,
+        PageSummary, ReadingModeChange, ReadingModeSetting, ScanReport, SeriesChanges,
+        SeriesCoverChoice, SeriesListing, SeriesSummary,
     },
     db::Database,
-    error_types::{internal_error_response, AppErrors, DatabaseError, PageError},
+    error_types::{AppErrors, DatabaseError, PageError},
     folder_scanner::scan_all_folders,
     models::{BookMetadata, BookSeriesMetadata, DatabaseTypes, LibraryMetadata, WithId},
     routes::{covers::CoverKind, library_management, reading_modes, served_files},
@@ -209,19 +209,14 @@ pub async fn get_cover(
     Ok(serve_file(&path, request).await)
 }
 
-/// Kick off a scan of every configured book directory.
+/// `POST /api/v1/scan`: scans every added folder and answers what it added, found stored already
+/// and couldn't read or store.
 pub async fn scan_all_directories(
     _admin: AdminSession,
     State(db): State<Arc<Database>>,
     State(covers): State<Covers>,
-) -> Response<Body> {
-    match scan_all_folders(db, covers).await {
-        Ok(()) => (StatusCode::OK, "Directory scan complete").into_response(),
-        Err(error) => {
-            tracing::error!("directory scan failed: {error:#}");
-            internal_error_response()
-        }
-    }
+) -> Result<Json<ScanReport>, AppErrors> {
+    Ok(Json(scan_all_folders(db, covers).await?))
 }
 
 /// `POST /api/v1/libraries` with `{"name", "library_type", "description"?}`: answers 201 and the

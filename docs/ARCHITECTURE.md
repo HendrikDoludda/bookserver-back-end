@@ -11,7 +11,7 @@
 - `src/database_related_scripts/` — `db.rs` (`Database`: the r2d2 pool and every DB operation), one file per operation trait, `db_email_codes.rs` / `db_login_challenges.rs` / `db_login_throttle.rs` (one table each), `db_users.rs` (the user queries the traits can't express, and how a `Role` is stored), `db_reading_modes.rs` (the `reading_modes` table, and how a `ReadingMode` and a book's `ReadingDirection` are stored), `db_translations.rs` (the translation catalog's three tables, and how an `Audience` is stored), `migrations.rs`, `translation_seed.rs` (checks the shipped translations and syncs them into the catalog at every start).
 - `src/data_models/` — `models.rs` (domain structs, `*DatabaseColumns` enums, `WithId<T>`) and the request/response bodies.
 - `src/error_types.rs` — the typed error enums, one per domain.
-- `src/scanner/` — `folder_scanner.rs` (walks the book folders, parses filenames), `cover_image_retriever.rs` (`Covers` — the cover folder, made and resolved at start, and the PDFium library, bound once at start — and one cover per format, named by the file's hash), `comic_info.rs` (the reading direction a CBZ's or an image folder's `ComicInfo.xml` states), `epub_package.rs` (the cover an EPUB's package document names, read without the rest of the book), `metadata_fetcher.rs` (placeholder).
+- `src/scanner/` — `folder_scanner.rs` (the scan: walks each added directory once, stores each book file and folder of pages in a transaction of its own, parses file names, and reports what it couldn't read or store), `cover_image_retriever.rs` (`Covers` — the cover folder, made and resolved at start, and the PDFium library, bound once at start — and one cover per format, named by the file's hash), `comic_info.rs` (the reading direction a CBZ's or an image folder's `ComicInfo.xml` states), `epub_package.rs` (the cover an EPUB's package document names, read without the rest of the book), `metadata_fetcher.rs` (placeholder).
 - `src/stream_reader.rs` — `serve_file`: a file on disk, with HTTP range support.
 - `src/book_pages.rs` — the pages of an image-folder or CBZ book, in natural order and numbered from 1: the one listing behind the page routes and the cover picker; and each page's size.
 - `src/test_support.rs` — shared test fixtures, compiled only for tests.
@@ -46,6 +46,7 @@
 - A 429 sends `Retry-After`: the seconds left on the lock, rounded up, carried by `TooManyAttempts`.
 - A route whose handler isn't built answers 501 `not_implemented`; a path no route matches answers 404 `not_found`, a method the route lacks 405 `method_not_allowed`.
 - A handler returns `Result<_, AppErrors>` and uses `?`; an error type without `IntoResponse` (such as `anyhow`) is logged and answered with `internal_error_response()`.
+- A scan answers what it couldn't read in its report (`ScanProblem` keys), never as an error; a crate's panic on one book is caught (`catch_unwind`) and reported as that book's `panicked`.
 - A setting the server can't use stops it at start with an `ApplicationSetUpErrors` naming the setting — never a panic.
 
 ## Email
@@ -62,7 +63,7 @@
 ## Files
 - Files are served by row id, never by a path the client supplies.
 - A cover row names a bare file in the cover folder that `AppState` holds (`Covers::path_of`), never a path.
-- A stored path is served only once its real location — every symlink resolved — lies inside its book's directory, or a cover's inside the cover folder (`served_files.rs`); the scan follows no symlink, and a symlink in an image folder is never a page.
+- A stored path is served only once its real location — every symlink resolved — lies inside its book's directory, or a cover's inside the cover folder (`served_files.rs`); the scan follows no symlink and reads no hidden entry — a dot name or `@eaDir` — and a symlink in an image folder is never a page.
 - Files are served through `serve_file` (`stream_reader.rs`): `tower_http`'s `ServeFile` — Range, 206, `If-Range` and `HEAD` included — once the path is checked to be a file, so a missing file or a folder answers the JSON `not_found`. Never hand-rolled range handling.
 - A page inside an archive is read whole, in `spawn_blocking` and up to `MAX_PAGE_BYTES`, and sent with its media type; `serve_file` is for files on disk.
 - An image's width and height come from its header through `imagesize`, never from decoding it; inside an archive only the entry's start is read (`book_pages::page_sizes`).
@@ -84,11 +85,12 @@
 - Tables without a single key column (the `library_elements` junction, `email_codes`, `reading_modes`) don't implement `Extract`; dedicated functions query them — `Database` methods for the junction, `db_email_codes.rs` for the codes, `db_reading_modes.rs` for the modes.
 - The translation catalog's tables (`locales`, `translation_keys`, `translations`) are queried only through `db_translations.rs`.
 - A list reads its rows in one query — `extract_all` for a whole table, or the ids first, in the list's order, and then one `IN (…)` query (`extract_batch`), which keeps that order — never one query per row.
-- An API answer never carries a server file path or a file hash: a book goes out as `BookSummary`, and its file and cover are reached by its id. The exception is an admin's answer about a scanned directory, which carries that directory's own path.
+- An API answer never carries a server file path or a file hash: a book goes out as `BookSummary`, and its file and cover are reached by its id. The exceptions are an admin's answer about a scanned directory, which carries that directory's own path, and a scan's report, whose failures carry a path inside their directory.
 - Every reference to another table is a declared `FOREIGN KEY` — `PRAGMA foreign_keys = ON` enforces only declared ones.
 - Times are stored as `INTEGER` unix seconds and read with `read_time` (must have a value — NULL is an error naming the column) or `read_optional_time` (NULL is `None`).
 - A column is nullable exactly when its Rust field is an `Option`.
 - The scanner finds a series by `match_key` — the title it was first found under, lowercased in Rust — among the series holding a book of the same directory; never by `name`, which an admin edits.
+- The scan reads a book's file outside any transaction, then stores its series, library link and row in one `IMMEDIATE` transaction of their own — never one per scan, which would hold the write lock for its whole length.
 - Back up SQLite with `VACUUM INTO`, never by copying the file — under WAL a plain copy is not a valid backup.
 - Schema changes: a new numbered `.sql` in `migrations/`, registered in `MIGRATIONS`; an applied migration is never edited.
 - A migration rebuilds a table — create, copy with the ids and `sqlite_sequence`'s counter, drop, rename — only while no other table references it: migrations run with foreign keys on, so dropping a referenced table fires its children's `ON DELETE`. Otherwise it adds columns with `ALTER TABLE … ADD COLUMN`.

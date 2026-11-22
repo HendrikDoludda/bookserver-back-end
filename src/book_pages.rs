@@ -80,6 +80,11 @@ pub fn folder_page(folder: &Path, number: usize) -> Result<PathBuf, PageError> {
     nth_page(folder_pages(folder)?, number)
 }
 
+/// Whether `folder` holds page images directly, so is an image-folder book.
+pub fn holds_pages(folder: &Path) -> bool {
+    folder_pages(folder).is_ok_and(|pages| !pages.is_empty())
+}
+
 /// Page `number` of a CBZ: the entry's bytes and media type.
 pub fn archive_page(
     path: &Path,

@@ -459,38 +459,6 @@ pub struct Directory {
     pub created_at: SystemTime,
 }
 
-// === Column Selector enum ====================================================
-pub enum ColumnSelector {
-    Book(BookDatabaseColumns),
-    Library(LibraryDatabaseColumns),
-    Series(SeriesDatabaseColumns),
-    User(UserDatabaseColumns),
-}
-
-impl From<BookDatabaseColumns> for ColumnSelector {
-    fn from(col: BookDatabaseColumns) -> Self {
-        ColumnSelector::Book(col)
-    }
-}
-
-impl From<LibraryDatabaseColumns> for ColumnSelector {
-    fn from(col: LibraryDatabaseColumns) -> Self {
-        ColumnSelector::Library(col)
-    }
-}
-
-impl From<SeriesDatabaseColumns> for ColumnSelector {
-    fn from(col: SeriesDatabaseColumns) -> Self {
-        ColumnSelector::Series(col)
-    }
-}
-
-impl From<UserDatabaseColumns> for ColumnSelector {
-    fn from(col: UserDatabaseColumns) -> Self {
-        ColumnSelector::User(col)
-    }
-}
-
 // === Series-Library connection model =========================================
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SeriesLibraryConnection {

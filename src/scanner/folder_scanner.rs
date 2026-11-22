@@ -1,6 +1,11 @@
+//! The scan: each added directory walked once, each book file and image folder in it stored in a
+//! transaction of its own, and what couldn't be read or stored reported.
+
 use std::{
-    fs::File,
+    ffi::OsStr,
+    fs::{self, File},
     io,
+    panic::{self, AssertUnwindSafe},
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -8,16 +13,18 @@ use std::{
 use blake3::Hasher;
 use once_cell::sync::Lazy;
 use regex::Regex;
-use tokio::{fs, sync::Semaphore};
-use tracing::{error, warn};
+use rusqlite::Connection;
+use tracing::warn;
+use walkdir::WalkDir;
 
+use crate::book_pages;
+use crate::data_models::books_model::{ScanFailure, ScanProblem, ScanReport};
 use crate::data_models::models::{
-    BookDatabaseColumns, BookFormat, BookLanguage, BookMetadata, BookSeriesMetadata,
-    ColumnSelector, DatabaseTypes, Directory, FileExtractedMetadata, ParsedName,
-    SeriesLibraryConnection,
+    BookDatabaseColumns, BookFormat, BookLanguage, BookMetadata, BookSeriesMetadata, Directory,
+    FileExtractedMetadata, ParsedName, QuerySeparator, SeriesLibraryConnection, WithId,
 };
 use crate::db::Database;
-use crate::error_types::FolderScannerError;
+use crate::error_types::{AppErrors, DatabaseError, ScanError};
 use crate::scanner::comic_info;
 use crate::scanner::cover_image_retriever::{cover_for, Covers};
 
@@ -31,8 +38,8 @@ static CHAPTER_REGEX: Lazy<Regex> =
 static PAGE_REGEX: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?i)\b(?:p|pa|page)[ _]?(\d+)\b").unwrap());
 
-/// Scans every added directory for supported files and creates database entries for them.
-pub async fn scan_all_folders(db: Arc<Database>, covers: Covers) -> anyhow::Result<()> {
+/// Scans every added directory and answers what it did, once its last book is written.
+pub async fn scan_all_folders(db: Arc<Database>, covers: Covers) -> Result<ScanReport, AppErrors> {
     let directories = Arc::clone(&db)
         .read(|conn| {
             Ok(Database::get_all_entries_with_connection::<Directory>(
@@ -40,218 +47,311 @@ pub async fn scan_all_folders(db: Arc<Database>, covers: Covers) -> anyhow::Resu
             )?)
         })
         .await?;
-
-    for directory in directories {
-        scan_folder(
-            PathBuf::from(directory.data.path),
-            db.clone(),
-            directory.id,
-            covers.clone(),
-        )
-        .await?;
-    }
-
-    Ok(())
-}
-
-/// Walks the tree of the directory `directory_id`, at `path`, and creates a book entry for each
-/// supported file. File processing runs on the blocking thread pool, gated by a semaphore.
-pub async fn scan_folder(
-    path: PathBuf,
-    db: Arc<Database>,
-    directory_id: i64,
-    covers: Covers,
-) -> Result<(), FolderScannerError> {
-    let semaphore = Arc::new(Semaphore::new(1)); // limit concurrency
-    let mut directories = vec![path];
-
-    while let Some(dir) = directories.pop() {
-        let mut entries = fs::read_dir(dir)
-            .await
-            .map_err(|_| FolderScannerError::MissingDirectory)?;
-
-        while let Some(entry) = entries
-            .next_entry()
-            .await
-            .map_err(|_| FolderScannerError::FileNotFound)?
-        {
-            let entry_path = entry.path();
-            // The entry's own type, so a symlink is never followed: what it leads to may lie
-            // outside the directory, and a book read there would show its page 1 as a cover.
-            let Ok(kind) = entry.file_type().await else {
-                continue;
-            };
-
-            if kind.is_dir() {
-                directories.push(entry_path);
-            } else if kind.is_file() {
-                let db = db.clone();
-                let covers = covers.clone();
-                let permit = semaphore
-                    .clone()
-                    .acquire_owned()
-                    .await
-                    .map_err(|_| FolderScannerError::PermitCreationFailed);
-
-                tokio::spawn(async move {
-                    let _permit = permit;
-
-                    if let Err(e) = tokio::task::spawn_blocking(move || {
-                        create_book_entry(&entry_path, &db, directory_id, &covers)
-                    })
-                    .await
-                    {
-                        error!("Task join error: {e}");
-                    }
-                });
-            }
+    let report = tokio::task::spawn_blocking(move || {
+        let mut report = ScanReport::default();
+        for directory in &directories {
+            scan_directory(&db, &covers, directory, &mut report);
         }
-    }
-
-    Ok(())
+        report
+    })
+    .await
+    .map_err(|error| {
+        tracing::error!("the scan did not finish: {error}");
+        ScanError::TaskFailed
+    })?;
+    Ok(report)
 }
 
-/// Creates the database entry (plus series and cover image) for one file of the directory
-/// `directory_id`. Unsupported files and files already in the database are skipped.
-fn create_book_entry(
-    path: &Path,
+/// Walks the directory and stores each book in it that isn't stored yet, adding to `report`.
+fn scan_directory(
     db: &Database,
-    directory_id: i64,
     covers: &Covers,
-) -> Result<(), FolderScannerError> {
-    if !is_valid_file_type(path) {
-        return Ok(());
+    directory: &WithId<Directory>,
+    report: &mut ScanReport,
+) {
+    let root = Path::new(&directory.data.path);
+    record(report, directory.id, root, walk(root), |found| {
+        store(db, covers, directory.id, found)
+    });
+}
+
+/// A book file or an image folder that the walk found.
+#[derive(Debug)]
+struct Found {
+    path: PathBuf,
+    format: BookFormat,
+}
+
+impl Found {
+    /// The name its title, volume, chapter and page are read from: a file's without its
+    /// extension, a folder's whole — "Mr. Robot" has none to drop.
+    fn name(&self) -> String {
+        let name = match self.format {
+            BookFormat::ImageComic => self.path.file_name(),
+            _ => self.path.file_stem(),
+        };
+        name.unwrap_or_default().to_string_lossy().into_owned()
     }
+}
 
-    let format = get_book_format(path)?;
+/// What a walk found: the books, and the folders it couldn't read.
+#[derive(Debug, Default)]
+struct Walk {
+    books: Vec<Found>,
+    problems: Vec<(PathBuf, ScanProblem)>,
+}
 
-    let file = File::open(path).map_err(|_| FolderScannerError::FileNotFound)?;
-    let metadata = get_file_metadata(&file, path);
-
-    let file_hash = match hash_file(file).map_err(|_| FolderScannerError::FileHashingFailed) {
-        Ok(hash) => Some(hash),
-        Err(e) => {
-            warn!("Failed to hash the file {:?}", e);
+/// The book files and image folders under `root`, in name order, and what couldn't be read on the
+/// way. A symlink is never followed and a hidden entry never read; images lying in `root` itself
+/// make no book.
+fn walk(root: &Path) -> Walk {
+    let mut walk = Walk::default();
+    // `walkdir` would report this as its first error, without telling a missing folder apart
+    // from one the system keeps it out of.
+    if let Err(error) = fs::read_dir(root) {
+        warn!("the directory {root:?} can't be read: {error}");
+        let problem = match error.kind() {
+            io::ErrorKind::NotFound => ScanProblem::DirectoryMissing,
+            _ => ScanProblem::DirectoryUnreadable,
+        };
+        walk.problems.push((root.to_path_buf(), problem));
+        return walk;
+    }
+    let entries = WalkDir::new(root)
+        .min_depth(1)
+        .sort_by_file_name()
+        .into_iter()
+        .filter_entry(|entry| !is_hidden(entry.file_name()));
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                warn!("part of the directory {root:?} can't be read: {error}");
+                let path = error.path().unwrap_or(root).to_path_buf();
+                walk.problems.push((path, ScanProblem::FolderUnreadable));
+                continue;
+            }
+        };
+        // The entry's own type — `walkdir` follows no symlink: what one leads to may lie outside
+        // the directory, and a book read there would show its page 1 as a cover.
+        let kind = entry.file_type();
+        let format = if kind.is_dir() {
+            book_pages::holds_pages(entry.path()).then_some(BookFormat::ImageComic)
+        } else if kind.is_file() {
+            book_format(entry.path())
+        } else {
             None
+        };
+        if let Some(format) = format {
+            walk.books.push(Found {
+                path: entry.into_path(),
+                format,
+            });
         }
-    };
+    }
+    walk
+}
 
-    let final_path = get_final_folder_path(path, format.as_str());
-    if check_folder_path_exists_in_db(&final_path, db) {
-        // TODO: also detect modified files and update their entry.
-        return Ok(());
+/// A hidden entry, never read: a dot name — macOS's `._` copies and `.Trashes` among them — or
+/// the thumbnails a Synology NAS keeps in `@eaDir`.
+fn is_hidden(name: &OsStr) -> bool {
+    name.as_encoded_bytes().starts_with(b".") || name == "@eaDir"
+}
+
+/// The format of a book file, by its extension in any case.
+fn book_format(path: &Path) -> Option<BookFormat> {
+    match path.extension()?.to_str()?.to_ascii_lowercase().as_str() {
+        "pdf" => Some(BookFormat::Pdf),
+        "epub" => Some(BookFormat::Epub),
+        "cbz" => Some(BookFormat::Cbz),
+        _ => None,
+    }
+}
+
+/// How a found book left the scan.
+#[derive(Debug, PartialEq)]
+enum Stored {
+    Added,
+    Unchanged,
+}
+
+/// Adds the walk's problems to `report`, then reads its books one at a time with `read`. A book
+/// that fails — or makes a library reading it panic — costs that book only.
+fn record(
+    report: &mut ScanReport,
+    directory_id: i64,
+    root: &Path,
+    walk: Walk,
+    mut read: impl FnMut(&Found) -> Result<Stored, ScanProblem>,
+) {
+    let failure = |path: &Path, problem| ScanFailure {
+        directory_id,
+        relative_path: path
+            .strip_prefix(root)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .into_owned(),
+        error_key: problem,
+    };
+    for (path, problem) in walk.problems {
+        report.failures.push(failure(&path, problem));
+    }
+    for found in &walk.books {
+        let outcome = panic::catch_unwind(AssertUnwindSafe(|| read(found))).unwrap_or_else(|_| {
+            warn!("reading {:?} panicked; the scan goes on", found.path);
+            Err(ScanProblem::Panicked)
+        });
+        match outcome {
+            Ok(Stored::Added) => report.added += 1,
+            Ok(Stored::Unchanged) => report.unchanged += 1,
+            Err(problem) => report.failures.push(failure(&found.path, problem)),
+        }
+    }
+}
+
+/// Stores `found` as a book of the directory, unless it is stored already. Its file is read first
+/// — hash, cover, reading direction — and one transaction then finds or makes its series and
+/// inserts it, so a failure leaves neither behind.
+fn store(
+    db: &Database,
+    covers: &Covers,
+    directory_id: i64,
+    found: &Found,
+) -> Result<Stored, ScanProblem> {
+    let file_path = found.path.to_string_lossy().into_owned();
+    let stored = db
+        .search_for_single_row::<BookMetadata>(
+            &[BookDatabaseColumns::FilePath],
+            &[&file_path],
+            QuerySeparator::And,
+        )
+        .map_err(|_| ScanProblem::StoreFailed)?;
+    if stored.is_some() {
+        return Ok(Stored::Unchanged);
     }
 
-    let parsed_name = get_final_file_name(&final_path);
-    let series_id = get_series_id(&parsed_name.title, db, directory_id)?;
-    let cover_image = cover_for(covers, &final_path, &format, file_hash.as_deref());
-    let reading_direction = comic_info::reading_direction(&format, &final_path);
+    let unreadable = |path: &Path, error: &dyn std::fmt::Display| {
+        warn!("{path:?} can't be read: {error}");
+        ScanProblem::FileUnreadable
+    };
+    // An image folder's own file is its page 1.
+    let source = match found.format {
+        BookFormat::ImageComic => book_pages::folder_page(&found.path, 1)
+            .map_err(|error| unreadable(&found.path, &error))?,
+        _ => found.path.clone(),
+    };
+    let file = File::open(&source).map_err(|error| unreadable(&source, &error))?;
+    let metadata = get_file_metadata(&file, &source);
+    let file_hash = hash_file(file).map_err(|error| unreadable(&source, &error))?;
+    let cover_image = cover_for(covers, &found.path, &found.format, Some(&file_hash));
+    let reading_direction = comic_info::reading_direction(&found.format, &found.path);
+    let parsed = parse_name(&found.name());
 
-    let metadata_entry = BookMetadata {
-        title: parsed_name.title,
+    let mut book = BookMetadata {
+        title: parsed.title,
         author: metadata.author,
-        format,
+        format: found.format.clone(),
         tags: vec![],
         description: None,
-        file_path: final_path.to_string_lossy().to_string(),
+        file_path,
         language: metadata.language_code,
         page_count: metadata.page_number,
         cover_image,
-        series: Some(series_id),
-        volume_number: parsed_name.volume_number,
-        chapter_number: parsed_name.chapter_number,
-        page_number: parsed_name.page_number,
-        file_hash,
+        series: None,
+        volume_number: parsed.volume_number,
+        chapter_number: parsed.chapter_number,
+        page_number: parsed.page_number,
+        file_hash: Some(file_hash),
         last_modified: metadata.modified_date,
         file_size: metadata.file_size,
         reading_direction,
         directory_id: Some(directory_id),
     };
+    db.setup_new_transaction(move |conn| {
+        // Another scan may have stored it since the check above.
+        let stored = Database::search_for_single_row_with_connection::<BookMetadata>(
+            conn,
+            &[BookDatabaseColumns::FilePath],
+            &[&book.file_path],
+            QuerySeparator::And,
+        )?;
+        if stored.is_some() {
+            return Ok(Stored::Unchanged);
+        }
+        book.series = Some(series_for(conn, &book.title, directory_id)?);
+        Database::insert_with_connection(conn, &book)?;
+        Ok(Stored::Added)
+    })
+    .map_err(|_| ScanProblem::StoreFailed)
+}
 
-    db.insert(&metadata_entry)
-        .map_err(|_| FolderScannerError::BookInsertionFailed)?;
-
-    Ok(())
+/// The series a book titled `title` joins: the one whose match key is the title lowercased and that
+/// holds a book of the same directory, else a new one named as found and put into the directory's
+/// library, if it has one. A failing lookup fails the book, as "none" would make a second series.
+fn series_for(conn: &Connection, title: &str, directory_id: i64) -> Result<i64, DatabaseError> {
+    // Lowercased in Rust, which knows every alphabet: "ÄRGER v02" finds "Ärger".
+    let key = title.to_lowercase();
+    if let Some(id) =
+        Database::series_of_directory_by_match_key_with_connection(conn, directory_id, &key)?
+    {
+        return Ok(id);
+    }
+    // Read here rather than when the scan started: the library may have been deleted since, and
+    // linking to it would fail the book.
+    let directory = Database::get_entry_with_connection::<Directory>(conn, directory_id)?;
+    let id = Database::insert_with_connection(
+        conn,
+        &BookSeriesMetadata {
+            name: title.to_string(),
+            match_key: key,
+            description: None,
+            cover_image: None,
+            start_release_year: None,
+            end_release_year: None,
+        },
+    )?;
+    if let Some(library_id) = directory.library_id {
+        Database::insert_with_connection(
+            conn,
+            &SeriesLibraryConnection {
+                series_id: id,
+                library_id,
+            },
+        )?;
+    }
+    Ok(id)
 }
 
 fn get_file_metadata(file: &File, path: &Path) -> FileExtractedMetadata {
-    let metadata = match file
+    let metadata = file
         .metadata()
-        .map_err(|_| FolderScannerError::MetadataExtractionFailed)
-    {
-        Ok(m) => Some(m),
-        Err(e) => {
-            warn!("Could not extract {:?}'s metadata  {:?}", path, e);
-            None
-        }
-    };
-
-    if let Some(metadata) = metadata {
-        let modified_time = match metadata
+        .inspect_err(|error| warn!("{path:?}'s size and time can't be read: {error}"))
+        .ok();
+    let modified_date = metadata.as_ref().and_then(|metadata| {
+        metadata
             .modified()
-            .map_err(|_| FolderScannerError::UnsupportedOperatingSystem)
-        {
-            Ok(date) => Some(date),
-            Err(e) => {
-                warn!("Failed to retrieve the modified date from file: {:?}", e);
-                None
-            }
-        };
-        let file_size = metadata.len();
-
-        FileExtractedMetadata {
-            file_size: Some(file_size),
-            modified_date: modified_time,
-            page_number: None,
-            language_code: BookLanguage::Other("Unknown".to_string()),
-            author: "Unknown Author".to_string(),
-        }
-    } else {
-        FileExtractedMetadata {
-            file_size: None,
-            modified_date: None,
-            page_number: None,
-            language_code: BookLanguage::Other("Unknown".to_string()),
-            author: "Unknown Author".to_string(),
-        }
+            .inspect_err(|error| warn!("{path:?}'s time can't be read: {error}"))
+            .ok()
+    });
+    FileExtractedMetadata {
+        file_size: metadata.map(|metadata| metadata.len()),
+        modified_date,
+        page_number: None,
+        language_code: BookLanguage::Other("Unknown".to_string()),
+        author: "Unknown Author".to_string(),
     }
 }
 
-fn get_final_folder_path(path: &Path, format: &str) -> PathBuf {
-    if (BookFormat::ImageComic.as_str() == format) && path.parent().is_some() {
-        let parent = path.parent().unwrap();
-        if parent.is_dir() {
-            return parent.to_path_buf();
-        }
-    }
-    path.to_path_buf()
-}
-
-fn check_folder_path_exists_in_db(path: &Path, db: &Database) -> bool {
-    let result = db.get_id_from_table(
-        DatabaseTypes::Books,
-        ColumnSelector::Book(BookDatabaseColumns::FilePath),
-        &path.to_string_lossy().to_string(),
-    );
-    matches!(result, Ok(Some(_)))
-}
-
-/// Splits a filename like `My_Series v02 c13` into a clean title plus the
-/// volume / chapter / page numbers found in it.
-fn get_final_file_name(path: &Path) -> ParsedName {
-    let file_name = path
-        .file_stem()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .to_string();
-
-    let volume = extract_number(&VOLUME_REGEX, &file_name);
-    let chapter = extract_number(&CHAPTER_REGEX, &file_name);
-    let page = extract_number(&PAGE_REGEX, &file_name);
+/// Splits a name like `My_Series v02 c13` into a clean title plus the volume / chapter / page
+/// numbers found in it.
+fn parse_name(name: &str) -> ParsedName {
+    let volume = extract_number(&VOLUME_REGEX, name);
+    let chapter = extract_number(&CHAPTER_REGEX, name);
+    let page = extract_number(&PAGE_REGEX, name);
 
     let cleaned = PAGE_REGEX
         .replace_all(
-            &CHAPTER_REGEX.replace_all(&VOLUME_REGEX.replace_all(&file_name, ""), ""),
+            &CHAPTER_REGEX.replace_all(&VOLUME_REGEX.replace_all(name, ""), ""),
             "",
         )
         .to_string();
@@ -277,71 +377,10 @@ fn extract_number(regex: &Regex, text: &str) -> Option<i64> {
         .and_then(|m| m.as_str().parse::<i64>().ok())
 }
 
-fn is_valid_file_type(path: &Path) -> bool {
-    matches!(
-        path.extension().and_then(|ext| ext.to_str()),
-        Some("pdf" | "epub" | "cbz" | "jpg" | "jpeg" | "png")
-    )
-}
-
-fn get_book_format(path: &Path) -> Result<BookFormat, FolderScannerError> {
-    match path.extension().and_then(|ext| ext.to_str()) {
-        Some("pdf") => Ok(BookFormat::Pdf),
-        Some("epub") => Ok(BookFormat::Epub),
-        Some("cbz") => Ok(BookFormat::Cbz),
-        Some("jpg" | "jpeg" | "png") => Ok(BookFormat::ImageComic),
-        _ => Err(FolderScannerError::FileTypeNotRecognized),
-    }
-}
-
 fn hash_file(mut file: File) -> io::Result<String> {
     let mut hasher = Hasher::new();
     std::io::copy(&mut file, &mut hasher)?;
     Ok(hasher.finalize().to_hex().to_string())
-}
-
-/// The series a book titled `title` joins: the one whose match key is the title lowercased and that
-/// holds a book of the same directory, else a new one named as found and put into the directory's
-/// library, if it has one. A database error fails the book, as a lookup that answered "none" would
-/// make a second series.
-fn get_series_id(title: &str, db: &Database, directory_id: i64) -> Result<i64, FolderScannerError> {
-    // Lowercased in Rust, which knows every alphabet: "ÄRGER v02" finds "Ärger".
-    let key = title.to_lowercase();
-    db.setup_new_transaction(|conn| {
-        if let Some(id) =
-            Database::series_of_directory_by_match_key_with_connection(conn, directory_id, &key)?
-        {
-            return Ok(id);
-        }
-        // Read here rather than when the scan started: the library may have been deleted since,
-        // and linking to it would fail the book.
-        let directory = Database::get_entry_with_connection::<Directory>(conn, directory_id)?;
-        let id = Database::insert_with_connection(
-            conn,
-            &BookSeriesMetadata {
-                name: title.to_string(),
-                match_key: key,
-                description: None,
-                cover_image: None,
-                start_release_year: None,
-                end_release_year: None,
-            },
-        )?;
-        if let Some(library_id) = directory.library_id {
-            Database::insert_with_connection(
-                conn,
-                &SeriesLibraryConnection {
-                    series_id: id,
-                    library_id,
-                },
-            )?;
-        }
-        Ok(id)
-    })
-    .map_err(|error| {
-        warn!("no series for {title:?}: {error}");
-        FolderScannerError::SeriesInsertionFailed
-    })
 }
 
 #[cfg(test)]
@@ -353,6 +392,48 @@ mod tests {
     use crate::test_support::{TempDatabase, TempDir};
 
     const RIGHT_TO_LEFT: &[u8] = b"<ComicInfo><Manga>YesAndRightToLeft</Manga></ComicInfo>";
+
+    /// The book file at `path`, as the walk finds it.
+    fn found(path: &Path) -> Found {
+        Found {
+            path: path.to_path_buf(),
+            format: book_format(path).expect("a book file"),
+        }
+    }
+
+    /// The image folder at `path`, as the walk finds it.
+    fn folder(path: &Path) -> Found {
+        Found {
+            path: path.to_path_buf(),
+            format: BookFormat::ImageComic,
+        }
+    }
+
+    /// The books `walk` finds under `root`: each one's path relative to it, and its format.
+    fn books_under(root: &Path) -> Vec<(String, String)> {
+        walk(root)
+            .books
+            .iter()
+            .map(|found| {
+                (
+                    found
+                        .path
+                        .strip_prefix(root)
+                        .unwrap()
+                        .to_string_lossy()
+                        .into_owned(),
+                    found.format.as_str().to_string(),
+                )
+            })
+            .collect()
+    }
+
+    fn expected(books: &[(&str, &str)]) -> Vec<(String, String)> {
+        books
+            .iter()
+            .map(|(path, format)| (path.to_string(), format.to_string()))
+            .collect()
+    }
 
     fn stored_direction(db: &Database, file_path: &Path) -> Option<String> {
         db.setup_new_transaction(|conn| {
@@ -404,6 +485,123 @@ mod tests {
     }
 
     #[test]
+    fn the_walk_finds_book_files_in_any_case_and_each_folder_of_pages_once() {
+        let dir = TempDir::new();
+        for name in [
+            "Berserk v01.PDF",
+            "Dune.Epub",
+            "Saga v02.CBZ",
+            "notes.txt",
+            "loose.jpg",
+            "Pluto/1.jpg",
+            "Pluto/2.png",
+            "Pluto/3.WEBP",
+            "Series/Vol 1/001.jpg",
+            "Series/Vol 2.cbz",
+        ] {
+            dir.write(name, b"contents");
+        }
+
+        assert_eq!(
+            books_under(dir.path()),
+            expected(&[
+                ("Berserk v01.PDF", "pdf"),
+                ("Dune.Epub", "epub"),
+                ("Pluto", "image_comic"),
+                ("Saga v02.CBZ", "cbz"),
+                ("Series/Vol 1", "image_comic"),
+                ("Series/Vol 2.cbz", "cbz"),
+            ]),
+            "the root's loose image makes no book, and `Series` holds no page of its own"
+        );
+    }
+
+    #[test]
+    fn a_hidden_entry_is_never_read_but_a_hidden_directory_is_walked() {
+        let dir = TempDir::new();
+        for name in [
+            ".books/Visible v01.cbz",
+            ".books/._Visible v01.cbz",
+            ".books/.Trashes/Deleted v01.cbz",
+            ".books/.thumbnails/1.jpg",
+            ".books/@eaDir/Visible v01.cbz/thumb.jpg",
+        ] {
+            dir.write(name, b"contents");
+        }
+
+        assert_eq!(
+            books_under(&dir.path().join(".books")),
+            expected(&[("Visible v01.cbz", "cbz")])
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlink_is_never_followed_so_a_loop_ends() {
+        use std::os::unix::fs::symlink;
+
+        let dir = TempDir::new();
+        let outside = TempDir::new();
+        dir.write("books/Kept v01.cbz", b"archive");
+        let private = outside.write("Private v01.cbz", b"archive");
+        outside.write("Pages/1.jpg", b"page");
+        let books = dir.path().join("books");
+        symlink(&private, books.join("Leak v01.cbz")).unwrap();
+        symlink(outside.path(), books.join("Linked")).unwrap();
+        symlink(&books, books.join("Loop")).unwrap();
+
+        assert_eq!(books_under(&books), expected(&[("Kept v01.cbz", "cbz")]));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_missing_or_closed_directory_and_a_closed_folder_are_reported() {
+        use std::os::unix::fs::PermissionsExt;
+        let set_mode = |path: &Path, mode| {
+            fs::set_permissions(path, fs::Permissions::from_mode(mode)).unwrap();
+        };
+        let dir = TempDir::new();
+        dir.write("closed/Hidden v01.cbz", b"archive");
+        for name in ["open/A v01.cbz", "open/Locked/B v01.cbz", "open/Z v01.cbz"] {
+            dir.write(name, b"archive");
+        }
+        let (missing, closed, open) = (
+            dir.path().join("gone"),
+            dir.path().join("closed"),
+            dir.path().join("open"),
+        );
+        let locked = open.join("Locked");
+        set_mode(&closed, 0o000);
+        set_mode(&locked, 0o000);
+
+        let walks = [&missing, &closed, &open].map(|root| walk(root));
+        // So that the folder can be deleted again.
+        set_mode(&closed, 0o755);
+        set_mode(&locked, 0o755);
+
+        let [missing_walk, closed_walk, open_walk] = walks;
+        assert!(missing_walk.books.is_empty() && closed_walk.books.is_empty());
+        assert_eq!(
+            missing_walk.problems,
+            [(missing, ScanProblem::DirectoryMissing)]
+        );
+        assert_eq!(
+            closed_walk.problems,
+            [(closed, ScanProblem::DirectoryUnreadable)]
+        );
+        let names: Vec<&Path> = open_walk
+            .books
+            .iter()
+            .map(|found| found.path.strip_prefix(&open).unwrap())
+            .collect();
+        assert_eq!(names, [Path::new("A v01.cbz"), Path::new("Z v01.cbz")]);
+        assert_eq!(
+            open_walk.problems,
+            [(locked, ScanProblem::FolderUnreadable)]
+        );
+    }
+
+    #[test]
     fn a_scanned_cbz_keeps_the_direction_its_comic_info_states() {
         let dir = TempDir::new();
         let covers = covers_in(&dir);
@@ -418,8 +616,8 @@ mod tests {
         );
         let pluto = dir.write_cbz("Pluto v01.cbz", &[("001.jpg", b"not a picture")]);
 
-        create_book_entry(&berserk, &temp.db, directory, &covers).unwrap();
-        create_book_entry(&pluto, &temp.db, directory, &covers).unwrap();
+        store(&temp.db, &covers, directory, &found(&berserk)).unwrap();
+        store(&temp.db, &covers, directory, &found(&pluto)).unwrap();
 
         assert_eq!(stored_direction(&temp.db, &berserk).as_deref(), Some("rtl"));
         assert_eq!(stored_direction(&temp.db, &pluto), None);
@@ -446,7 +644,7 @@ mod tests {
         let directory = add_directory(&temp.db, dir.path(), None);
         let pdf = dir.write("Berserk v01.pdf", b"%PDF-1.7 tiny");
 
-        create_book_entry(&pdf, &temp.db, directory, &covers).unwrap();
+        store(&temp.db, &covers, directory, &found(&pdf)).unwrap();
 
         assert_eq!(stored_cover(&temp.db, &pdf), None);
     }
@@ -465,7 +663,7 @@ mod tests {
             )],
         );
 
-        create_book_entry(&epub, &temp.db, directory, &covers).unwrap();
+        store(&temp.db, &covers, directory, &found(&epub)).unwrap();
 
         assert_eq!(stored_cover(&temp.db, &epub), None);
     }
@@ -535,7 +733,7 @@ mod tests {
         .unwrap()
     }
 
-    /// Scans each of `names` as a one-page CBZ in `dir`, a file of the directory `directory`;
+    /// Stores each of `names` as a one-page CBZ in `dir`, a file of the directory `directory`;
     /// answers their paths.
     fn scan_books(dir: &TempDir, db: &Database, directory: i64, names: &[&str]) -> Vec<PathBuf> {
         let covers = covers_in(dir);
@@ -543,7 +741,7 @@ mod tests {
             .iter()
             .map(|name| {
                 let book = dir.write_cbz(name, &[("001.jpg", b"not a picture")]);
-                create_book_entry(&book, db, directory, &covers).unwrap();
+                store(db, &covers, directory, &found(&book)).unwrap();
                 book
             })
             .collect()
@@ -596,6 +794,33 @@ mod tests {
     }
 
     #[test]
+    fn a_folders_title_is_its_whole_name_and_a_files_drops_its_extension() {
+        let dir = TempDir::new();
+        let covers = covers_in(&dir);
+        let temp = TempDatabase::open();
+        let directory = add_directory(&temp.db, dir.path(), None);
+        dir.write("Mr. Robot/1.jpg", b"page");
+        let file = dir.write_cbz("Dr. Stone v01.cbz", &[("001.jpg", b"not a picture")]);
+
+        store(
+            &temp.db,
+            &covers,
+            directory,
+            &folder(&dir.path().join("Mr. Robot")),
+        )
+        .unwrap();
+        store(&temp.db, &covers, directory, &found(&file)).unwrap();
+
+        assert_eq!(
+            series_rows(&temp.db),
+            [
+                ("Mr. Robot".to_string(), "mr. robot".to_string()),
+                ("Dr. Stone".to_string(), "dr. stone".to_string())
+            ]
+        );
+    }
+
+    #[test]
     fn a_renamed_series_still_collects_new_volumes() {
         let dir = TempDir::new();
         let temp = TempDatabase::open();
@@ -637,18 +862,140 @@ mod tests {
         );
         let second = dir.write_cbz("Berserk v02.cbz", &[("001.jpg", b"not a picture")]);
 
-        let result = create_book_entry(&second, &temp.db, directory, &covers_in(&dir));
+        let result = store(&temp.db, &covers_in(&dir), directory, &found(&second));
 
-        assert!(matches!(
-            result,
-            Err(FolderScannerError::SeriesInsertionFailed)
-        ));
+        assert_eq!(result, Err(ScanProblem::StoreFailed));
         assert_eq!(count(&temp.db, "series"), 1);
         assert_eq!(
             count(&temp.db, "books"),
             1,
             "no row, so the next scan tries the file again"
         );
+    }
+
+    #[test]
+    fn a_book_whose_insert_fails_leaves_no_series_behind() {
+        let dir = TempDir::new();
+        let temp = TempDatabase::open();
+        let directory = add_directory(&temp.db, dir.path(), None);
+        sql(
+            &temp.db,
+            "CREATE TRIGGER refuse_books BEFORE INSERT ON books \
+             BEGIN SELECT RAISE(ABORT, 'refused'); END",
+        );
+        let book = dir.write_cbz("Berserk v01.cbz", &[("001.jpg", b"not a picture")]);
+
+        let result = store(&temp.db, &covers_in(&dir), directory, &found(&book));
+
+        assert_eq!(result, Err(ScanProblem::StoreFailed));
+        assert_eq!(count(&temp.db, "series"), 0, "made for it, gone with it");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_stored_book_is_not_read_again_and_one_that_cannot_be_read_gets_no_row() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = TempDir::new();
+        let covers = covers_in(&dir);
+        let temp = TempDatabase::open();
+        let directory = add_directory(&temp.db, dir.path(), None);
+        let stored = dir.write_cbz("Berserk v01.cbz", &[("001.jpg", b"not a picture")]);
+        let closed = dir.write_cbz("Monster v01.cbz", &[("001.jpg", b"not a picture")]);
+        assert_eq!(
+            store(&temp.db, &covers, directory, &found(&stored)),
+            Ok(Stored::Added)
+        );
+        for file in [&stored, &closed] {
+            fs::set_permissions(file, fs::Permissions::from_mode(0o000)).unwrap();
+        }
+
+        assert_eq!(
+            store(&temp.db, &covers, directory, &found(&stored)),
+            Ok(Stored::Unchanged)
+        );
+        assert_eq!(
+            store(&temp.db, &covers, directory, &found(&closed)),
+            Err(ScanProblem::FileUnreadable)
+        );
+        assert_eq!(count(&temp.db, "books"), 1);
+        assert_eq!(count(&temp.db, "series"), 1, "none for the closed book");
+    }
+
+    #[test]
+    fn a_book_that_panics_is_reported_and_the_next_one_is_stored() {
+        let dir = TempDir::new();
+        let cover_folder = TempDir::new();
+        let covers = covers_in(&cover_folder);
+        let temp = TempDatabase::open();
+        let directory = add_directory(&temp.db, dir.path(), None);
+        dir.write_cbz("A v01.cbz", &[("001.jpg", b"not a picture")]);
+        let kept = dir.write_cbz("B v01.cbz", &[("001.jpg", b"not a picture")]);
+        let mut report = ScanReport::default();
+
+        record(
+            &mut report,
+            directory,
+            dir.path(),
+            walk(dir.path()),
+            |found| {
+                if found.path.ends_with("A v01.cbz") {
+                    panic!("a library broke on this file");
+                }
+                store(&temp.db, &covers, directory, found)
+            },
+        );
+
+        assert_eq!(
+            report,
+            ScanReport {
+                added: 1,
+                unchanged: 0,
+                failures: vec![ScanFailure {
+                    directory_id: directory,
+                    relative_path: "A v01.cbz".to_string(),
+                    error_key: ScanProblem::Panicked,
+                }],
+            }
+        );
+        assert!(series_of(&temp.db, &kept).is_some());
+    }
+
+    #[tokio::test]
+    async fn a_scan_reports_each_directory_and_its_books_are_stored_when_it_returns() {
+        let books = TempDir::new();
+        let elsewhere = TempDir::new();
+        let cover_folder = TempDir::new();
+        let temp = TempDatabase::open();
+        let cbz = books.write_cbz("Berserk v01.cbz", &[("001.jpg", b"not a picture")]);
+        books.write("Pluto/1.jpg", b"page");
+        let present = add_directory(&temp.db, books.path(), None);
+        let missing = add_directory(&temp.db, &elsewhere.path().join("gone"), None);
+        let covers = covers_in(&cover_folder);
+        let report = |added, unchanged| ScanReport {
+            added,
+            unchanged,
+            failures: vec![ScanFailure {
+                directory_id: missing,
+                relative_path: String::new(),
+                error_key: ScanProblem::DirectoryMissing,
+            }],
+        };
+
+        let first = scan_all_folders(Arc::clone(&temp.db), covers.clone())
+            .await
+            .unwrap();
+        assert_eq!(first, report(2, 0));
+        assert_eq!(directory_of(&temp.db, &cbz), Some(present));
+        assert_eq!(
+            directory_of(&temp.db, &books.path().join("Pluto")),
+            Some(present)
+        );
+
+        let second = scan_all_folders(Arc::clone(&temp.db), covers)
+            .await
+            .unwrap();
+        assert_eq!(second, report(0, 2));
+        assert_eq!(count(&temp.db, "books"), 2);
     }
 
     #[test]
@@ -660,7 +1007,7 @@ mod tests {
         let page = crate::test_support::encoded_image(image::ImageFormat::Png, 2, 3);
         let cbz = dir.write_cbz("Berserk v01.cbz", &[("001.png", &page)]);
 
-        create_book_entry(&cbz, &temp.db, directory, &covers).unwrap();
+        store(&temp.db, &covers, directory, &found(&cbz)).unwrap();
 
         let name = stored_cover(&temp.db, &cbz).expect("a cover");
         assert!(!name.contains('/'), "a bare file name: {name}");
@@ -758,56 +1105,10 @@ mod tests {
         sql(&temp.db, "DELETE FROM directories");
         let book = dir.write_cbz("Berserk v01.cbz", &[("001.jpg", b"not a picture")]);
 
-        let result = create_book_entry(&book, &temp.db, directory, &covers_in(&dir));
+        let result = store(&temp.db, &covers_in(&dir), directory, &found(&book));
 
-        assert!(matches!(
-            result,
-            Err(FolderScannerError::SeriesInsertionFailed)
-        ));
+        assert_eq!(result, Err(ScanProblem::StoreFailed));
         assert_eq!(count(&temp.db, "series"), 0);
         assert_eq!(count(&temp.db, "books"), 0);
-    }
-
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn the_scan_follows_no_symlink_out_of_its_directory() {
-        use std::os::unix::fs::symlink;
-
-        let books = TempDir::new();
-        let outside = TempDir::new();
-        let cover_folder = TempDir::new();
-        let temp = TempDatabase::open();
-        let kept = books.write_cbz("Berserk v01.cbz", &[("001.jpg", b"not a picture")]);
-        let private = outside.write_cbz("Private v01.cbz", &[("001.jpg", b"not a picture")]);
-        // The scan returns while its last file may still be read. Each folder holding a book
-        // also holds `zz/notes.txt`, read after the folder's own files, so that file is no book.
-        books.write("zz/notes.txt", b"not a book");
-        outside.write("zz/notes.txt", b"not a book");
-        symlink(&private, books.path().join("Leak v01.cbz")).unwrap();
-        symlink(outside.path(), books.path().join("Linked")).unwrap();
-        let directory = add_directory(&temp.db, books.path(), None);
-
-        scan_folder(
-            books.path().to_path_buf(),
-            Arc::clone(&temp.db),
-            directory,
-            covers_in(&cover_folder),
-        )
-        .await
-        .unwrap();
-
-        let stored: Vec<String> = temp
-            .db
-            .setup_new_transaction(|conn| {
-                Ok(conn
-                    .prepare("SELECT file_path FROM books")
-                    .unwrap()
-                    .query_map([], |row| row.get(0))
-                    .unwrap()
-                    .collect::<Result<_, _>>()
-                    .unwrap())
-            })
-            .unwrap();
-        assert_eq!(stored, [kept.to_string_lossy()]);
     }
 }

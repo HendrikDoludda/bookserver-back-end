@@ -3014,21 +3014,36 @@ mod tests {
         }
         assert_eq!(libraries(&temp), 1, "a member deletes nothing");
 
-        // An empty folder, so the scan is over before the answer comes.
         let folder = TempDir::new();
-        std::fs::create_dir_all(folder.path()).unwrap();
-        temp.db
+        folder.write("Berserk v01.cbz", b"not an archive");
+        let gone = TempDir::new();
+        let gone_directory = temp
+            .db
             .setup_new_transaction(|conn| {
-                conn.execute(
-                    "INSERT INTO directories (path) VALUES (?1)",
-                    [folder.path().to_string_lossy()],
-                )
-                .unwrap();
-                Ok(())
+                for path in [folder.path(), gone.path()] {
+                    conn.execute(
+                        "INSERT INTO directories (path) VALUES (?1)",
+                        [path.to_string_lossy()],
+                    )
+                    .unwrap();
+                }
+                Ok(conn.last_insert_rowid())
             })
             .unwrap();
-        let (status, _, _) = call(&app, authorized("POST", "/api/v1/scan", &admin, None)).await;
+        let (status, _, body) = call(&app, authorized("POST", "/api/v1/scan", &admin, None)).await;
         assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            json(&body),
+            serde_json::json!({
+                "added": 1,
+                "unchanged": 0,
+                "failures": [{
+                    "directory_id": gone_directory,
+                    "relative_path": "",
+                    "error_key": "directory_missing"
+                }]
+            })
+        );
         assert_eq!(libraries(&temp), 1, "a scan makes no library");
 
         let (status, _, _) = call(&app, authorized("DELETE", &delete, &admin, None)).await;
