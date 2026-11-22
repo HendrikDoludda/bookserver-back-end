@@ -2,7 +2,9 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::{
     db::checked_unix_time,
-    models::{BookMetadata, BookSeriesMetadata, LibraryMetadata, LibraryType, ReadingMode},
+    models::{
+        BookMetadata, BookSeriesMetadata, Directory, LibraryMetadata, LibraryType, ReadingMode,
+    },
 };
 
 /// One library as the library list sends it, and how many series it holds — never its stored
@@ -86,6 +88,33 @@ pub struct SeriesChanges {
     pub start_release_year: Option<Option<i64>>,
     #[serde(default, deserialize_with = "present")]
     pub end_release_year: Option<Option<i64>>,
+}
+
+/// `POST /api/v1/directories`: the folder's path on the server, and whether a library of its own
+/// receives its series — named `library_name`, else after the folder, and typed `library_type`,
+/// which is required then.
+#[derive(Debug, Deserialize)]
+pub struct NewDirectory {
+    pub path: String,
+    pub create_library: bool,
+    pub library_type: Option<LibraryType>,
+    pub library_name: Option<String>,
+}
+
+/// One scanned folder as an admin gets it: its canonical path, and the library its series join.
+#[derive(Debug, Serialize)]
+pub struct DirectorySummary {
+    pub path: String,
+    pub library_id: Option<i64>,
+}
+
+impl From<Directory> for DirectorySummary {
+    fn from(directory: Directory) -> Self {
+        DirectorySummary {
+            path: directory.path,
+            library_id: directory.library_id,
+        }
+    }
 }
 
 /// `PUT /api/v1/series/{id}/cover`: the book whose cover the series shows.
@@ -216,6 +245,7 @@ mod tests {
             last_modified: Some(UNIX_EPOCH + Duration::from_secs(1_700_000_000)),
             file_size: Some(2048),
             reading_direction: None,
+            directory_id: Some(2),
         }
     }
 

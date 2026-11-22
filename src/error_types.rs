@@ -433,6 +433,30 @@ impl LibraryError {
     }
 }
 
+/// Adding a folder for the scanner to read.
+#[derive(Error, Debug)]
+pub enum DirectoryError {
+    #[error("The path is not absolute, or names no existing folder")]
+    NotFound,
+    #[error("The folder has been added already")]
+    Taken,
+    #[error("The folder lies inside or around another folder, the cover folder or the database's")]
+    Overlaps,
+    #[error("Looking at the folder on disk did not finish")]
+    TaskFailed,
+}
+
+impl DirectoryError {
+    fn status_and_key(&self) -> (StatusCode, &'static str) {
+        match self {
+            DirectoryError::NotFound => (StatusCode::BAD_REQUEST, "directory_not_found"),
+            DirectoryError::Taken => (StatusCode::CONFLICT, "directory_taken"),
+            DirectoryError::Overlaps => (StatusCode::CONFLICT, "directory_overlaps"),
+            DirectoryError::TaskFailed => INTERNAL,
+        }
+    }
+}
+
 /// A shipped translation file that breaks a rule: the server doesn't start with one. `file` is
 /// the path under `translations/`, `key` the dotted name inside the file.
 #[derive(Debug, Error, PartialEq)]
@@ -506,6 +530,8 @@ pub enum AppErrors {
     ReadingMode(#[from] ReadingModeError),
     #[error(transparent)]
     Library(#[from] LibraryError),
+    #[error(transparent)]
+    Directory(#[from] DirectoryError),
     #[error("The request's body, path or query could not be read")]
     InvalidRequest,
 }
@@ -521,6 +547,7 @@ impl AppErrors {
             AppErrors::Pages(err) => err.status_and_key(),
             AppErrors::ReadingMode(err) => err.status_and_key(),
             AppErrors::Library(err) => err.status_and_key(),
+            AppErrors::Directory(err) => err.status_and_key(),
             AppErrors::InvalidRequest => (StatusCode::BAD_REQUEST, "invalid_request"),
         }
     }
@@ -730,6 +757,21 @@ mod tests {
                 "series_not_empty",
             ),
             (
+                DirectoryError::NotFound.into(),
+                StatusCode::BAD_REQUEST,
+                "directory_not_found",
+            ),
+            (
+                DirectoryError::Taken.into(),
+                StatusCode::CONFLICT,
+                "directory_taken",
+            ),
+            (
+                DirectoryError::Overlaps.into(),
+                StatusCode::CONFLICT,
+                "directory_overlaps",
+            ),
+            (
                 DatabaseError::EntryNotFound.into(),
                 StatusCode::NOT_FOUND,
                 "not_found",
@@ -812,6 +854,7 @@ mod tests {
             DatabaseError::OperationFailure.into(),
             DatabaseError::OperationCommitFailure.into(),
             DatabaseError::InvalidParameters.into(),
+            DirectoryError::TaskFailed.into(),
             TranslationError::MissingText {
                 key: "email.verify_email.body".to_string(),
             }

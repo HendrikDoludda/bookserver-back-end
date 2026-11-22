@@ -168,25 +168,29 @@ pub fn unreachable_mailer() -> Mailer {
 /// `:memory:` path won't do: every pooled connection would get its own empty database.
 pub struct TempDatabase {
     pub db: Arc<Database>,
-    /// The cover folder of [`TempDatabase::state`], empty until something is written into it.
+    /// The cover folder of [`TempDatabase::state`], which makes it.
     pub covers: TempDir,
-    // Fields drop in declaration order, so the pool closes before the file is deleted.
-    _file: TempFile,
+    // Fields drop in declaration order, so the pool closes before its folder is deleted.
+    folder: TempDir,
 }
 
 impl TempDatabase {
     pub fn open() -> Self {
-        let path = std::env::temp_dir().join(format!("bookserver-test-{}.sqlite", Uuid::new_v4()));
-        let db = Database::open(&path).expect("open a temp-file database");
+        // A folder of its own: in the shared temp folder, every test's `TempDir` would lie inside
+        // the database's folder, where no directory may be added.
+        let folder = TempDir::new();
+        fs::create_dir_all(folder.path()).expect("make the database's folder");
+        let db = Database::open(&folder.path().join("app_data.sqlite"))
+            .expect("open a temp-file database");
         Self {
             db: Arc::new(db),
             covers: TempDir::new(),
-            _file: TempFile(path),
+            folder,
         }
     }
 
-    pub fn path(&self) -> &Path {
-        &self._file.0
+    pub fn path(&self) -> PathBuf {
+        self.folder.path().join("app_data.sqlite")
     }
 
     /// Router state on this database, with the given mailer, `TEST_SETUP_CODE`,
@@ -197,10 +201,7 @@ impl TempDatabase {
             mailer,
             setup_code: SetupCode::of(TEST_SETUP_CODE),
             totp_cipher: test_cipher(),
-            covers: Covers {
-                folder: self.covers.path().to_path_buf(),
-                pdfium: None,
-            },
+            covers: Covers::in_folder(self.covers.path(), None).expect("make the cover folder"),
         }
     }
 }
@@ -309,17 +310,5 @@ pub fn package_document(metadata: &str, manifest: &str) -> String {
 impl Drop for TempDir {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
-    }
-}
-
-struct TempFile(PathBuf);
-
-impl Drop for TempFile {
-    fn drop(&mut self) {
-        for suffix in ["", "-wal", "-shm"] {
-            let mut path = self.0.clone().into_os_string();
-            path.push(suffix);
-            let _ = fs::remove_file(path);
-        }
     }
 }

@@ -1,7 +1,7 @@
 use image::ImageFormat;
 use pdfium_render::prelude::*;
 use std::fs::{self, File};
-use std::io::Read;
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -26,6 +26,17 @@ pub struct Covers {
 }
 
 impl Covers {
+    /// Covers in `folder`, which is made if it is missing.
+    // Kept with every symlink resolved: a directory being added is compared with it by real
+    // location, which a missing folder doesn't have yet.
+    pub fn in_folder(folder: &Path, pdfium: Option<Arc<Pdfium>>) -> io::Result<Self> {
+        fs::create_dir_all(folder)?;
+        Ok(Covers {
+            folder: fs::canonicalize(folder)?,
+            pdfium,
+        })
+    }
+
     /// The cover file a row names.
     pub fn path_of(&self, name: &str) -> PathBuf {
         self.folder.join(name)

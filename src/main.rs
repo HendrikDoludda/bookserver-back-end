@@ -9,7 +9,7 @@ use bookserver_backend::routes::email_helper::Mailer;
 use bookserver_backend::routes::registration::SetupCode;
 use bookserver_backend::routes::totp_cipher::TotpCipher;
 use bookserver_backend::scanner::cover_image_retriever::{bind_pdfium, Covers};
-use std::path::PathBuf;
+use std::path::Path;
 use std::sync::Arc;
 
 #[tokio::main]
@@ -43,10 +43,8 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
-    let covers = Covers {
-        folder: PathBuf::from("./cover_images/"),
-        pdfium: bind_pdfium().map(Arc::new),
-    };
+    let covers = Covers::in_folder(Path::new("./cover_images/"), bind_pdfium().map(Arc::new))
+        .context("Failed to create the cover folder ./cover_images/")?;
 
     let state = AppState {
         db,

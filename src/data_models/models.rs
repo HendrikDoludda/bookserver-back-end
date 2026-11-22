@@ -29,6 +29,7 @@ pub enum DatabaseTypes {
     TranslationKeys,
     Translations,
     ReadingModes,
+    Directories,
 }
 
 impl DatabaseTypes {
@@ -48,6 +49,7 @@ impl DatabaseTypes {
             DatabaseTypes::TranslationKeys => "translation_keys",
             DatabaseTypes::Translations => "translations",
             DatabaseTypes::ReadingModes => "reading_modes",
+            DatabaseTypes::Directories => "directories",
         }
     }
 
@@ -59,7 +61,8 @@ impl DatabaseTypes {
             | DatabaseTypes::Library
             | DatabaseTypes::Series
             | DatabaseTypes::Users
-            | DatabaseTypes::TranslationKeys => Some("id"),
+            | DatabaseTypes::TranslationKeys
+            | DatabaseTypes::Directories => Some("id"),
             DatabaseTypes::LibraryElements
             | DatabaseTypes::Translations
             | DatabaseTypes::ReadingModes => None,
@@ -277,6 +280,9 @@ pub struct BookMetadata {
     pub file_size: Option<u64>,
     /// The direction the file states; `None` when it states none.
     pub reading_direction: Option<ReadingDirection>,
+    /// The scanned folder the file lies in; `None` for a book scanned before folders were stored,
+    /// until adding its folder adopts it.
+    pub directory_id: Option<i64>,
 }
 
 pub enum BookDatabaseColumns {
@@ -297,6 +303,7 @@ pub enum BookDatabaseColumns {
     LastModified,
     FileSize,
     ReadingDirection,
+    DirectoryId,
 }
 
 impl AsRef<str> for BookDatabaseColumns {
@@ -319,6 +326,7 @@ impl AsRef<str> for BookDatabaseColumns {
             BookDatabaseColumns::LastModified => "last_modified",
             BookDatabaseColumns::FileSize => "file_size",
             BookDatabaseColumns::ReadingDirection => "reading_direction",
+            BookDatabaseColumns::DirectoryId => "directory_id",
         }
     }
 }
@@ -437,6 +445,18 @@ impl AsRef<str> for LibraryDatabaseColumns {
             LibraryDatabaseColumns::Description => "description",
         }
     }
+}
+
+// === Scanned directory model =================================================
+/// A folder the scanner reads.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Directory {
+    /// Canonical: absolute, with every symlink resolved.
+    pub path: String,
+    /// The library its series join; `None` when it was added without one, or that library was
+    /// deleted.
+    pub library_id: Option<i64>,
+    pub created_at: SystemTime,
 }
 
 // === Column Selector enum ====================================================

@@ -2,6 +2,7 @@
 
 pub mod account;
 pub mod authentication;
+pub mod directories;
 pub mod extractors;
 pub mod helpers;
 pub mod library;

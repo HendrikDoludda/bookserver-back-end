@@ -7,8 +7,9 @@ use rusqlite::{
 };
 
 use crate::models::{
-    BookFormat, BookLanguage, BookMetadata, BookSeriesMetadata, EmailCode, LibraryMetadata,
-    LibraryType, LoginChallenge, RecoveryCodes, Sessions, UserMetadata, UserSettings, TOTP,
+    BookFormat, BookLanguage, BookMetadata, BookSeriesMetadata, Directory, EmailCode,
+    LibraryMetadata, LibraryType, LoginChallenge, RecoveryCodes, Sessions, UserMetadata,
+    UserSettings, TOTP,
 };
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -55,6 +56,17 @@ impl FromRow for BookMetadata {
             file_size,
             series: row.get("series")?,
             reading_direction: row.get("reading_direction")?,
+            directory_id: row.get("directory_id")?,
+        })
+    }
+}
+
+impl FromRow for Directory {
+    fn from_row(row: &Row) -> rusqlite::Result<Self> {
+        Ok(Self {
+            path: row.get("path")?,
+            library_id: row.get("library_id")?,
+            created_at: read_time(row, "created_at")?,
         })
     }
 }

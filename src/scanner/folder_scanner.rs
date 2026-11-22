@@ -157,6 +157,7 @@ fn create_book_entry(
         last_modified: metadata.modified_date,
         file_size: metadata.file_size,
         reading_direction,
+        directory_id: None,
     };
 
     db.insert(&metadata_entry)

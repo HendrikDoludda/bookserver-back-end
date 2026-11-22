@@ -1,6 +1,6 @@
 use crate::data_models::models::{
-    BookMetadata, BookSeriesMetadata, LibraryMetadata, RecoveryCodes, SeriesLibraryConnection,
-    Sessions, UserMetadata, UserSettings, TOTP,
+    BookMetadata, BookSeriesMetadata, Directory, LibraryMetadata, RecoveryCodes,
+    SeriesLibraryConnection, Sessions, UserMetadata, UserSettings, TOTP,
 };
 use crate::database_related_scripts::db::{
     checked_unix_time, convert_system_time_to_unix_time, logged,
@@ -17,8 +17,10 @@ impl Insert for BookMetadata {
     fn insert(&self, conn: &Connection) -> Result<i64, DatabaseError> {
         let query = "INSERT INTO books (title, author, format, language, cover_image, \
             description, tags, file_path, page_count, volume_number, chapter_number, \
-            page_number, file_hash, last_modified, file_size, series, reading_direction) \
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)";
+            page_number, file_hash, last_modified, file_size, series, reading_direction, \
+            directory_id) \
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, \
+            ?18)";
 
         let params = params![
             self.title.clone(),
@@ -37,12 +39,33 @@ impl Insert for BookMetadata {
             self.last_modified.and_then(checked_unix_time),
             self.file_size.map(|size| size as i64),
             self.series,
-            self.reading_direction
+            self.reading_direction,
+            self.directory_id
         ];
 
         conn.execute(query, params).map_err(logged(
             "inserting into",
             "books",
+            DatabaseError::InsertionFailure,
+        ))?;
+        let id = conn.last_insert_rowid();
+        Ok(id)
+    }
+}
+
+impl Insert for Directory {
+    fn insert(&self, conn: &Connection) -> Result<i64, DatabaseError> {
+        let query = "INSERT INTO directories (path, library_id, created_at) VALUES (?1, ?2, ?3)";
+
+        let params = params![
+            self.path,
+            self.library_id,
+            convert_system_time_to_unix_time(self.created_at)
+        ];
+
+        conn.execute(query, params).map_err(logged(
+            "inserting into",
+            "directories",
             DatabaseError::InsertionFailure,
         ))?;
         let id = conn.last_insert_rowid();
@@ -285,6 +308,7 @@ mod tests {
             last_modified: None,
             file_size: None,
             reading_direction: None,
+            directory_id: None,
         }
     }
 
@@ -294,6 +318,9 @@ mod tests {
         conn.execute("INSERT INTO series (name) VALUES ('a quiet sea')", [])
             .unwrap();
         let series_id = conn.last_insert_rowid();
+        conn.execute("INSERT INTO directories (path) VALUES ('/books')", [])
+            .unwrap();
+        let directory_id = conn.last_insert_rowid();
         let book = BookMetadata {
             title: "A Quiet Sea".to_string(),
             author: "R. Writer".to_string(),
@@ -312,6 +339,7 @@ mod tests {
             last_modified: Some(at(1_700_000_000)),
             file_size: Some(1_048_576),
             reading_direction: Some(ReadingDirection::Rtl),
+            directory_id: Some(directory_id),
         };
         let id = Database::insert_with_connection(&conn, &book).unwrap();
 
@@ -336,6 +364,7 @@ mod tests {
         assert_eq!(stored.last_modified, Some(at(1_700_000_000)));
         assert_eq!(stored.file_size, Some(1_048_576));
         assert_eq!(stored.reading_direction, Some(ReadingDirection::Rtl));
+        assert_eq!(stored.directory_id, Some(directory_id));
     }
 
     #[test]
@@ -357,6 +386,50 @@ mod tests {
         assert_eq!(stored.file_hash, None);
         assert_eq!(stored.file_size, None);
         assert_eq!(stored.reading_direction, None);
+        assert_eq!(stored.directory_id, None);
+    }
+
+    #[test]
+    fn directory_round_trip() {
+        let conn = memory_connection();
+        conn.execute(
+            "INSERT INTO library (library_name, library_type) VALUES ('Manga', 'comics')",
+            [],
+        )
+        .unwrap();
+        let library_id = conn.last_insert_rowid();
+        let with_library = Directory {
+            path: "/books/manga".to_string(),
+            library_id: Some(library_id),
+            created_at: at(1_700_000_000),
+        };
+        let without = Directory {
+            path: "/books/novels".to_string(),
+            library_id: None,
+            created_at: at(1_700_000_060),
+        };
+        let first = Database::insert_with_connection(&conn, &with_library).unwrap();
+        let second = Database::insert_with_connection(&conn, &without).unwrap();
+
+        let stored = Database::get_all_entries_with_connection::<Directory>(&conn).unwrap();
+        let found: Vec<(i64, &str, Option<i64>, SystemTime)> = stored
+            .iter()
+            .map(|row| {
+                (
+                    row.id,
+                    row.data.path.as_str(),
+                    row.data.library_id,
+                    row.data.created_at,
+                )
+            })
+            .collect();
+        assert_eq!(
+            found,
+            [
+                (first, "/books/manga", Some(library_id), at(1_700_000_000)),
+                (second, "/books/novels", None, at(1_700_000_060)),
+            ]
+        );
     }
 
     #[test]

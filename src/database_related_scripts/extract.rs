@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use crate::{
     data_models::models::{
-        BookMetadata, BookSeriesMetadata, LibraryMetadata, RecoveryCodes, Sessions, UserMetadata,
-        UserSettings, WithId, TOTP,
+        BookMetadata, BookSeriesMetadata, Directory, LibraryMetadata, RecoveryCodes, Sessions,
+        UserMetadata, UserSettings, WithId, TOTP,
     },
     database_related_scripts::{db::logged, db_from_row::FromRow},
     error_types::DatabaseError,
@@ -126,7 +126,14 @@ impl Extract for BookMetadata {
     const KEY: &'static str = "id";
     const COLUMNS: &'static str = "id, title, author, format, language, cover_image, \
         description, tags, file_path, page_count, volume_number, chapter_number, \
-        page_number, file_hash, last_modified, file_size, series, reading_direction";
+        page_number, file_hash, last_modified, file_size, series, reading_direction, \
+        directory_id";
+}
+
+impl Extract for Directory {
+    const TABLE: &'static str = "directories";
+    const KEY: &'static str = "id";
+    const COLUMNS: &'static str = "id, path, library_id, created_at";
 }
 
 impl Extract for BookSeriesMetadata {

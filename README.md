@@ -129,7 +129,7 @@ A bad or incomplete setting stops the server at start, naming it.
 ## API
 
 Every endpoint except `/health`, `/api/v1/auth/…` and the two `/api/v1/locales…` reads needs
-`Authorization: Bearer <session_token>` and answers 401 without it; scanning, `GET /api/v1/series` and every change to a
+`Authorization: Bearer <session_token>` and answers 401 without it; scanning, the scanned folders, `GET /api/v1/series` and every change to a
 library or a series also need an admin (403 for a member). Implemented endpoints:
 
 | Method | Path | Description |
@@ -155,6 +155,9 @@ library or a series also need an admin (403 for a member). Implemented endpoints
 | `GET` | `/api/v1/books/{id}/pages/{number}` | One page's image, counted from 1 |
 | `GET` | `/api/v1/covers/{kind}/{id}` | The cover of a `book`, `series` or `library`; a series or library without its own shows its first book's, in reading order; `404 not_found` when there is none |
 | `POST` | `/api/v1/scan` | Scan `BOOK_DIRS` and catalog new files |
+| `GET` | `/api/v1/directories` | The scanned folders by path: `id`, `path` (its full path on the server) and the `library_id` their series join, or `null` |
+| `POST` | `/api/v1/directories` | Add a folder to scan from `{"path", "create_library", "library_type"?, "library_name"?}`: with `create_library`, a new library of `library_type` — required then — named `library_name` or after the folder receives its series. The stored books inside it that belong to no folder yet join it. Answers `201` and the folder; `400 directory_not_found` for a path that isn't absolute or names no folder, `409 directory_taken` for one added already, `409 directory_overlaps` for one inside or around another folder, the cover folder or the database's |
+| `DELETE` | `/api/v1/directories/{id}` | Remove a folder: its books leave the catalog, with the series left without books; its library and the files stay. `204`, or `404 not_found` |
 | `DELETE` | `/api/v1/libraries/{id}` | Delete a library — `204`, or `404 not_found` for an id no library has; its series and books stay |
 | `POST` | `/api/v1/auth/register` | Sign up; the first account sends the setup code from the server log and becomes admin. An optional `locale` from `GET /api/v1/locales` becomes the account's language setting, which its mails are written in (`400 invalid_locale` for one the server doesn't offer). Answers the login tokens, or `202` when the account must first confirm its email — within 48 hours, or a later sign-up deletes it |
 | `POST` | `/api/v1/auth/verify_email` | Confirm the email with the mailed code and the password; answers like login |

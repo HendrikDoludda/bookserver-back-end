@@ -40,6 +40,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "series_match_key",
         sql: include_str!("../../migrations/0005_series_match_key.sql"),
     },
+    Migration {
+        version: 6,
+        name: "directories",
+        sql: include_str!("../../migrations/0006_directories.sql"),
+    },
 ];
 
 // Apply every migration that has not yet been recorded in `schema_migrations`.
@@ -287,6 +292,8 @@ mod tests {
             ("library", "library_type"),
             ("series", "name"),
             ("series", "match_key"),
+            ("directories", "path"),
+            ("directories", "created_at"),
         ];
         let optional = [
             ("books", "cover_image"),
@@ -300,12 +307,14 @@ mod tests {
             ("books", "file_size"),
             ("books", "series"),
             ("books", "reading_direction"),
+            ("books", "directory_id"),
             ("library", "cover_image"),
             ("library", "description"),
             ("series", "description"),
             ("series", "cover_image"),
             ("series", "start_release_year"),
             ("series", "end_release_year"),
+            ("directories", "library_id"),
         ];
         for (table, column) in required {
             assert!(
@@ -320,7 +329,7 @@ mod tests {
             );
         }
         // A new column has to be sorted into one of the lists above.
-        for table in ["books", "library", "series"] {
+        for table in ["books", "library", "series", "directories"] {
             let columns: i64 = conn
                 .query_row(
                     "SELECT COUNT(*) FROM pragma_table_info(?1) WHERE name != 'id'",
@@ -782,7 +791,13 @@ mod tests {
             .unwrap();
         let mut expected = before;
         expected[dangling_row][series_column] = rusqlite::types::Value::Null;
-        assert_eq!(book_rows(&conn), expected, "every book, id and column kept");
+        // Later migrations append columns; the ones this schema had come first.
+        let columns = expected[0].len();
+        let kept: Vec<_> = book_rows(&conn)
+            .into_iter()
+            .map(|row| row[..columns].to_vec())
+            .collect();
+        assert_eq!(kept, expected, "every book, id and column kept");
 
         let next = insert_full_book(&conn, "/books/Berserk v04.cbz", Some(berserk)).unwrap();
         assert_eq!(next, top + 1, "the deleted top id is not handed out again");
@@ -983,5 +998,140 @@ mod tests {
             .collect::<Result<_, _>>()
             .unwrap();
         assert_eq!(left, [berserk]);
+    }
+
+    #[test]
+    fn a_database_of_the_fifth_schema_keeps_every_book_outside_any_directory() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        configure(&conn).unwrap();
+        // As a server of the fifth schema left it.
+        for migration in &MIGRATIONS[..5] {
+            conn.execute_batch(migration.sql).unwrap();
+        }
+        conn.execute_batch(
+            "CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, \
+             applied_at INTEGER NOT NULL); \
+             INSERT INTO schema_migrations (version, applied_at) \
+             VALUES (1, 0), (2, 0), (3, 0), (4, 0), (5, 0);",
+        )
+        .unwrap();
+        let berserk = insert_series(&conn, "berserk");
+        insert_full_book(&conn, "/books/Berserk v01.cbz", Some(berserk)).unwrap();
+        insert_full_book(&conn, "../Downloads/Loose.cbz", None).unwrap();
+        let before = book_rows(&conn);
+
+        run(&mut conn).unwrap();
+
+        let after = book_rows(&conn);
+        assert_eq!(after.len(), before.len());
+        for (old, new) in before.iter().zip(&after) {
+            assert_eq!(new[..old.len()], old[..], "every column kept");
+            assert_eq!(
+                new[old.len()..],
+                [rusqlite::types::Value::Null],
+                "and in no directory"
+            );
+        }
+        let index: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' \
+                 AND tbl_name = 'books' AND name = 'books_by_directory'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(index, 1);
+        let mut check = conn.prepare("PRAGMA foreign_key_check").unwrap();
+        assert!(check.query([]).unwrap().next().unwrap().is_none());
+    }
+
+    fn insert_directory(
+        conn: &Connection,
+        path: &str,
+        library_id: Option<i64>,
+    ) -> rusqlite::Result<i64> {
+        conn.execute(
+            "INSERT INTO directories (path, library_id) VALUES (?1, ?2)",
+            params![path, library_id],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    #[test]
+    fn a_directory_is_added_once_and_names_an_existing_library_or_none() {
+        let conn = memory_connection();
+        insert_directory(&conn, "/books", None).unwrap();
+
+        assert!(
+            insert_directory(&conn, "/books", None).is_err(),
+            "one row per path"
+        );
+        assert!(
+            insert_directory(&conn, "/comics", Some(999)).is_err(),
+            "only a library that exists"
+        );
+        let created_at: i64 = conn
+            .query_row(
+                "SELECT created_at FROM directories WHERE path = '/books'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(created_at > 1_700_000_000, "stamped when it was added");
+    }
+
+    #[test]
+    fn removing_a_directory_removes_its_books_and_deleting_its_library_only_unlinks_it() {
+        let conn = memory_connection();
+        conn.execute(
+            "INSERT INTO library (library_name, library_type) VALUES ('Manga', 'comics')",
+            [],
+        )
+        .unwrap();
+        let library = conn.last_insert_rowid();
+        let manga = insert_directory(&conn, "/manga", Some(library)).unwrap();
+        let comics = insert_directory(&conn, "/comics", None).unwrap();
+        let place = |path: &str, directory: i64| {
+            let book = insert_full_book(&conn, path, None).unwrap();
+            conn.execute(
+                "UPDATE books SET directory_id = ?1 WHERE id = ?2",
+                [directory, book],
+            )
+            .unwrap();
+        };
+        place("/manga/Berserk v01.cbz", manga);
+        place("/manga/Berserk v02.cbz", manga);
+        place("/comics/Saga v01.cbz", comics);
+        insert_full_book(&conn, "/old/Loose.cbz", None).unwrap();
+        assert!(
+            conn.execute(
+                "UPDATE books SET directory_id = 999 WHERE directory_id IS NULL",
+                []
+            )
+            .is_err(),
+            "a book names an existing directory or none"
+        );
+
+        conn.execute("DELETE FROM library WHERE id = ?1", [library])
+            .unwrap();
+        let libraries: Vec<Option<i64>> = conn
+            .prepare("SELECT library_id FROM directories ORDER BY id")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(libraries, [None, None], "both directories stay");
+
+        conn.execute("DELETE FROM directories WHERE id = ?1", [manga])
+            .unwrap();
+        let left: Vec<String> = conn
+            .prepare("SELECT file_path FROM books ORDER BY file_path")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(left, ["/comics/Saga v01.cbz", "/old/Loose.cbz"]);
     }
 }

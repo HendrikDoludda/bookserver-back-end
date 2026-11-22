@@ -1,5 +1,10 @@
 {
-  "email_not_configured": "This server can't send email yet. Ask its admin to set it up.",
+  "directory_not_found": "There's no folder at this path on the server.",
+  "@directory_not_found": "The path must be the folder's full path on the server, such as /Users/me/Books, and name a folder, not a file.",
+  "directory_overlaps": "This folder lies inside a folder the server already uses, or contains one.",
+  "@directory_overlaps": "Another added folder, or the folder where the server keeps its covers or its database.",
+  "directory_taken": "This folder has already been added.",
+  "email_not_configured":"This server can't send email yet. Ask its admin to set it up.",
   "email_not_verified": "Confirm your email address first, with the code we sent you.",
   "email_taken": "This email address is already in use.",
   "email_unchanged": "This is already your email address.",

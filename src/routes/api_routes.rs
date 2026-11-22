@@ -18,6 +18,7 @@ use crate::{
             confirm_password_reset, log_out, refresh_session, request_password_reset,
             resend_verification_code, sign_in, sign_up, verify_email,
         },
+        directories::{add_directory, list_directories, remove_directory},
         helpers::{method_not_allowed, not_found, not_implemented, ping_server},
         library::{
             add_library, add_series_to_library, choose_library_cover, choose_series_cover,
@@ -89,6 +90,8 @@ pub fn set_up_routes() -> Router<AppState> {
         .route("/covers/{kind}/{id}", get(get_cover))
         .route("/scan", post(scan_all_directories))
         .route("/scan/status", get(not_implemented))
+        .route("/directories", get(list_directories).post(add_directory))
+        .route("/directories/{id}", delete(remove_directory))
         .route("/directories/{id}/scan", post(not_implemented))
         .route("/metadata/scan", post(not_implemented))
         .route("/search", get(not_implemented))
@@ -832,6 +835,202 @@ mod tests {
 
         assert_eq!(status, StatusCode::NOT_FOUND);
         assert_eq!(json(&body), serde_json::json!({ "error": "not_found" }));
+    }
+
+    /// `path` canonical, as a directory stores it.
+    fn canonical(path: &std::path::Path) -> String {
+        std::fs::canonicalize(path)
+            .unwrap()
+            .to_string_lossy()
+            .into_owned()
+    }
+
+    #[tokio::test]
+    async fn an_admin_adds_a_folder_lists_it_and_removes_it_over_http() {
+        let temp = TempDatabase::open();
+        let admin = logged_in(&temp, "alice", "admin");
+        let files = TempDir::new();
+        let file = files.write("Manga/Berserk v01.cbz", b"cbz");
+        let berserk = scanned_series(&temp, "Berserk");
+        scanned_book(&temp, berserk, &file.to_string_lossy());
+        let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
+        let folder = files.path().join("Manga");
+
+        let body = serde_json::json!({
+            "path": folder.to_string_lossy(),
+            "create_library": true,
+            "library_type": "comics",
+        });
+        let (status, _, added) = call(
+            &app,
+            authorized("POST", "/api/v1/directories", &admin, Some(body)),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+        let directory = json(&added)["id"].as_i64().unwrap();
+        let library = json(&added)["library_id"].as_i64().unwrap();
+        let expected = serde_json::json!([{
+            "id": directory,
+            "path": canonical(&folder),
+            "library_id": library,
+        }]);
+        assert_eq!(json(&added), expected[0]);
+
+        let (status, _, listed) =
+            call(&app, authorized("GET", "/api/v1/directories", &admin, None)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(json(&listed), expected);
+        let (_, _, libraries) =
+            call(&app, authorized("GET", "/api/v1/libraries", &admin, None)).await;
+        assert_eq!(
+            json(&libraries),
+            serde_json::json!([{
+                "id": library,
+                "name": "Manga",
+                "library_type": "comics",
+                "description": null,
+                "series_count": 1,
+            }]),
+            "the stored book's series joined the folder's library"
+        );
+
+        let uri = format!("/api/v1/directories/{directory}");
+        let (status, _, body) = call(&app, authorized("DELETE", &uri, &admin, None)).await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        assert!(body.is_empty());
+        let (_, _, listed) =
+            call(&app, authorized("GET", "/api/v1/directories", &admin, None)).await;
+        assert_eq!(json(&listed), serde_json::json!([]));
+        let (_, _, series) = call(&app, authorized("GET", "/api/v1/series", &admin, None)).await;
+        assert_eq!(
+            json(&series),
+            serde_json::json!([]),
+            "its book left, and its emptied series with it"
+        );
+        assert!(file.exists(), "the file stays");
+
+        let (status, _, body) = call(&app, authorized("DELETE", &uri, &admin, None)).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(json(&body), serde_json::json!({ "error": "not_found" }));
+    }
+
+    #[tokio::test]
+    async fn adding_a_folder_answers_its_refusals_as_json() {
+        let temp = TempDatabase::open();
+        let admin = logged_in(&temp, "alice", "admin");
+        let files = TempDir::new();
+        files.write("Manga/Berserk v01.cbz", b"cbz");
+        let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
+        let path = |relative: &str| files.path().join(relative).to_string_lossy().into_owned();
+        let (status, _, _) = call(
+            &app,
+            authorized(
+                "POST",
+                "/api/v1/directories",
+                &admin,
+                Some(serde_json::json!({ "path": path("Manga"), "create_library": false })),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+
+        for (body, expected_status, key) in [
+            (
+                serde_json::json!({ "path": path("Missing"), "create_library": false }),
+                StatusCode::BAD_REQUEST,
+                "directory_not_found",
+            ),
+            (
+                serde_json::json!({ "path": path("Manga/"), "create_library": false }),
+                StatusCode::CONFLICT,
+                "directory_taken",
+            ),
+            (
+                serde_json::json!({ "path": path(""), "create_library": false }),
+                StatusCode::CONFLICT,
+                "directory_overlaps",
+            ),
+            (
+                serde_json::json!({ "path": path("Manga"), "create_library": true }),
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
+            ),
+            (
+                serde_json::json!({ "path": path("Manga") }),
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
+            ),
+            (
+                serde_json::json!({
+                    "path": path("Manga"),
+                    "create_library": true,
+                    "library_type": "comics",
+                    "library_name": " ",
+                }),
+                StatusCode::BAD_REQUEST,
+                "invalid_name",
+            ),
+        ] {
+            let label = body.to_string();
+            let (status, _, answer) = call(
+                &app,
+                authorized("POST", "/api/v1/directories", &admin, Some(body)),
+            )
+            .await;
+            assert_eq!(status, expected_status, "{label}");
+            assert_eq!(
+                json(&answer),
+                serde_json::json!({ "error": key }),
+                "{label}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn only_an_admin_adds_lists_or_removes_folders() {
+        let temp = TempDatabase::open();
+        let member = logged_in(&temp, "bob", "member");
+        let files = TempDir::new();
+        files.write("Manga/Berserk v01.cbz", b"cbz");
+        let directory = temp
+            .db
+            .setup_new_transaction(|conn| {
+                conn.execute("INSERT INTO directories (path) VALUES ('/books')", [])
+                    .unwrap();
+                Ok(conn.last_insert_rowid())
+            })
+            .unwrap();
+        let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
+
+        for (method, uri, body) in [
+            ("GET", "/api/v1/directories".to_string(), None),
+            (
+                "POST",
+                "/api/v1/directories".to_string(),
+                Some(serde_json::json!({
+                    "path": files.path().join("Manga").to_string_lossy(),
+                    "create_library": false,
+                })),
+            ),
+            ("DELETE", format!("/api/v1/directories/{directory}"), None),
+        ] {
+            let (status, _, answer) = call(&app, authorized(method, &uri, &member, body)).await;
+            assert_eq!(status, StatusCode::FORBIDDEN, "{method} {uri}");
+            assert_eq!(json(&answer), serde_json::json!({ "error": "forbidden" }));
+        }
+        let paths: Vec<String> = temp
+            .db
+            .setup_new_transaction(|conn| {
+                Ok(conn
+                    .prepare("SELECT path FROM directories")
+                    .unwrap()
+                    .query_map([], |row| row.get(0))
+                    .unwrap()
+                    .collect::<Result<_, _>>()
+                    .unwrap())
+            })
+            .unwrap();
+        assert_eq!(paths, ["/books"], "a member adds and removes nothing");
     }
 
     #[tokio::test]
@@ -2463,6 +2662,9 @@ mod tests {
         ("GET", "/api/v1/covers/book/1"),
         ("POST", "/api/v1/scan"),
         ("GET", "/api/v1/scan/status"),
+        ("GET", "/api/v1/directories"),
+        ("POST", "/api/v1/directories"),
+        ("DELETE", "/api/v1/directories/1"),
         ("POST", "/api/v1/directories/1/scan"),
         ("POST", "/api/v1/metadata/scan"),
         ("GET", "/api/v1/search"),

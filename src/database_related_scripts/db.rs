@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::SystemTime;
 
@@ -26,6 +26,7 @@ use crate::error_types::{AppErrors, DatabaseError};
 // the backend: pass filter options in with the request and apply them in the query.
 pub struct Database {
     pool: r2d2::Pool<SqliteConnectionManager>,
+    folder: PathBuf,
 }
 
 /// A series' books in reading order: by volume, then chapter — a book without the number after
@@ -119,7 +120,20 @@ impl Database {
             .get()
             .map_err(|_| DatabaseError::PoolConnectionRetrievalFailure)?;
 
-        Ok(Self { pool })
+        // A directory being added is compared with this folder by real location, so its symlinks
+        // are resolved here, once the file exists.
+        let mut folder = std::fs::canonicalize(path).map_err(|cause| {
+            tracing::error!("locating the database's folder failed: {cause}");
+            DatabaseError::DatabaseInitializationFailure
+        })?;
+        folder.pop();
+
+        Ok(Self { pool, folder })
+    }
+
+    /// The folder the database's file lies in, with every symlink resolved.
+    pub fn folder(&self) -> &Path {
+        &self.folder
     }
 
     pub fn insert(&self, data: &impl Insert) -> Result<i64, DatabaseError> {
@@ -579,7 +593,6 @@ impl Database {
         Ok(libraries)
     }
 
-    /// Whether the library holds the series.
     /// The series whose match key is `key` — the oldest, should there be several — or `None`.
     pub fn series_by_match_key_with_connection(
         conn: &Connection,
@@ -594,6 +607,53 @@ impl Database {
         .map_err(logged("reading", "series", DatabaseError::QueryFailure))
     }
 
+    /// The id and stored path of every book in no directory, by id.
+    pub fn books_without_directory_with_connection(
+        conn: &Connection,
+    ) -> Result<Vec<(i64, String)>, DatabaseError> {
+        let mut stmt = conn
+            .prepare("SELECT id, file_path FROM books WHERE directory_id IS NULL ORDER BY id")
+            .map_err(logged(
+                "reading",
+                "books",
+                DatabaseError::TaskPreparationFailure,
+            ))?;
+        let rows = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .map_err(logged("reading", "books", DatabaseError::QueryFailure))?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(logged(
+            "reading",
+            "books",
+            DatabaseError::NextRowFailure,
+        ))
+    }
+
+    /// The series that hold a book of the directory, by id.
+    pub fn series_of_directory_with_connection(
+        conn: &Connection,
+        directory_id: i64,
+    ) -> Result<Vec<i64>, DatabaseError> {
+        let mut stmt = conn
+            .prepare(
+                "SELECT DISTINCT series FROM books \
+                 WHERE directory_id = ?1 AND series IS NOT NULL ORDER BY series",
+            )
+            .map_err(logged(
+                "reading",
+                "books",
+                DatabaseError::TaskPreparationFailure,
+            ))?;
+        let rows = stmt
+            .query_map([directory_id], |row| row.get::<_, i64>(0))
+            .map_err(logged("reading", "books", DatabaseError::QueryFailure))?;
+        rows.collect::<Result<Vec<i64>, _>>().map_err(logged(
+            "reading",
+            "books",
+            DatabaseError::NextRowFailure,
+        ))
+    }
+
+    /// Whether the library holds the series.
     pub fn library_holds_series_with_connection(
         conn: &Connection,
         library_id: i64,
@@ -1212,5 +1272,82 @@ mod tests {
             Database::count_books_per_series_in_library_with_connection(&conn, empty).unwrap();
 
         assert!(counts.is_empty());
+    }
+
+    fn insert_directory(conn: &Connection, path: &str) -> i64 {
+        conn.execute("INSERT INTO directories (path) VALUES (?1)", [path])
+            .unwrap();
+        conn.last_insert_rowid()
+    }
+
+    fn place(conn: &Connection, book: i64, directory: i64) {
+        conn.execute(
+            "UPDATE books SET directory_id = ?1 WHERE id = ?2",
+            [directory, book],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn only_the_books_in_no_directory_are_listed_with_their_stored_paths() {
+        let conn = memory_connection();
+        let berserk = insert_series(&conn, "berserk");
+        let books = insert_directory(&conn, "/books");
+        let placed = insert_book(&conn, berserk, "Berserk", Some(1), None);
+        place(&conn, placed, books);
+        let first = insert_book(&conn, berserk, "Berserk", Some(2), None);
+        let second = insert_book(&conn, berserk, "Berserk", Some(3), None);
+        let path_of = |id: i64| -> String {
+            conn.query_row("SELECT file_path FROM books WHERE id = ?1", [id], |row| {
+                row.get(0)
+            })
+            .unwrap()
+        };
+
+        let unplaced = Database::books_without_directory_with_connection(&conn).unwrap();
+
+        assert_eq!(
+            unplaced,
+            [(first, path_of(first)), (second, path_of(second))]
+        );
+    }
+
+    #[test]
+    fn a_directorys_series_are_those_holding_one_of_its_books_each_once() {
+        let conn = memory_connection();
+        let manga = insert_directory(&conn, "/manga");
+        let comics = insert_directory(&conn, "/comics");
+        let berserk = insert_series(&conn, "berserk");
+        let monster = insert_series(&conn, "monster");
+        let saga = insert_series(&conn, "saga");
+        for (series, directory) in [(monster, manga), (berserk, manga), (berserk, manga)] {
+            let book = insert_book(&conn, series, "Volume", None, None);
+            place(&conn, book, directory);
+        }
+        let other = insert_book(&conn, saga, "Saga", None, None);
+        place(&conn, other, comics);
+        insert_book(&conn, saga, "Saga", Some(2), None);
+
+        assert_eq!(
+            Database::series_of_directory_with_connection(&conn, manga).unwrap(),
+            [berserk, monster]
+        );
+        assert_eq!(
+            Database::series_of_directory_with_connection(&conn, manga + 99).unwrap(),
+            Vec::<i64>::new()
+        );
+    }
+
+    #[test]
+    fn a_database_knows_its_folder_with_every_symlink_resolved() {
+        let temp = TempDatabase::open();
+
+        let folder = temp.db.folder();
+
+        assert!(folder.is_absolute());
+        assert_eq!(
+            folder,
+            std::fs::canonicalize(temp.path().parent().unwrap()).unwrap()
+        );
     }
 }

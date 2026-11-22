@@ -1,5 +1,8 @@
 {
-  "email_not_configured": "Dieser Server kann noch keine E-Mails senden; das muss erst eingerichtet werden.",
+  "directory_not_found": "Unter diesem Pfad gibt es auf dem Server keinen Ordner.",
+  "directory_overlaps": "Dieser Ordner liegt in einem Ordner, den der Server schon verwendet, oder enthält einen.",
+  "directory_taken": "Dieser Ordner wurde schon hinzugefügt.",
+  "email_not_configured":"Dieser Server kann noch keine E-Mails senden; das muss erst eingerichtet werden.",
   "email_not_verified": "Bestätige zuerst deine E-Mail-Adresse – mit dem Code, den wir dir geschickt haben.",
   "email_taken": "Diese E-Mail-Adresse wird bereits verwendet.",
   "email_unchanged": "Das ist bereits deine E-Mail-Adresse.",

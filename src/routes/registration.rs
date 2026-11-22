@@ -463,6 +463,7 @@ mod tests {
             Err(AppErrors::Pages(_)) => "pages error",
             Err(AppErrors::ReadingMode(_)) => "reading mode error",
             Err(AppErrors::Library(_)) => "library error",
+            Err(AppErrors::Directory(_)) => "directory error",
             Err(AppErrors::Database(_)) => "database error",
             Err(AppErrors::InvalidRequest) => "invalid request",
         }

@@ -89,6 +89,7 @@ mod tests {
             last_modified: None,
             file_size: None,
             reading_direction: direction,
+            directory_id: None,
         }
     }
 
