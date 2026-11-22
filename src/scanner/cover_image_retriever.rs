@@ -50,19 +50,58 @@ impl Covers {
     }
 }
 
-/// Binds the PDFium library once: from the working directory, else from the system's library
-/// path. `None`, with a warning, when neither has it.
-// `Pdfium::default()` tries the same two places, but panics when both fail.
+/// Binds the PDFium library once: from the binary's folder, else the working directory, else the
+/// system's library path. `None`, with a warning, when none has it; a library that is there but
+/// can't be loaded is warned about too.
+// `Pdfium::default()` tries only the last two places, and panics when both fail.
 pub fn bind_pdfium() -> Option<Pdfium> {
-    let bindings = Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("./"))
-        .or_else(|_| Pdfium::bind_to_system_library());
-    match bindings {
-        Ok(bindings) => Some(Pdfium::new(bindings)),
+    let exe = std::env::current_exe().ok();
+    let working = std::env::current_dir().ok();
+    bind_in(&pdfium_folders(exe.as_deref(), working.as_deref())).or_else(bind_system)
+}
+
+/// PDFium from the first of `folders` whose library loads; one that is there but doesn't load
+/// is warned about.
+fn bind_in(folders: &[PathBuf]) -> Option<Pdfium> {
+    for folder in folders {
+        let path = Pdfium::pdfium_platform_library_name_at_path(folder);
+        if !path.is_file() {
+            continue;
+        }
+        match Pdfium::bind_to_library(&path) {
+            Ok(bindings) => {
+                tracing::info!("PDFium loaded from {}", path.display());
+                return Some(Pdfium::new(bindings));
+            }
+            Err(error) => tracing::warn!("PDFium at {} can't be loaded: {error:?}", path.display()),
+        }
+    }
+    None
+}
+
+fn bind_system() -> Option<Pdfium> {
+    match Pdfium::bind_to_system_library() {
+        Ok(bindings) => {
+            tracing::info!("PDFium loaded from the system's library path");
+            Some(Pdfium::new(bindings))
+        }
         Err(error) => {
             tracing::warn!("The PDFium library can't be loaded, so PDFs get no cover: {error:?}");
             None
         }
     }
+}
+
+/// The folders PDFium is looked for in before the system's library path, in order: the one the
+/// binary lies in, then the working directory — each once.
+fn pdfium_folders(exe: Option<&Path>, working: Option<&Path>) -> Vec<PathBuf> {
+    let mut folders = Vec::new();
+    for folder in [exe.and_then(Path::parent), working].into_iter().flatten() {
+        if !folders.iter().any(|known: &PathBuf| known == folder) {
+            folders.push(folder.to_path_buf());
+        }
+    }
+    folders
 }
 
 /// The file name of the cover for the book at `path`: one already in the cover folder under the
@@ -211,7 +250,7 @@ fn create_folder(folder: &Path) -> Result<(), CoverImageError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{encoded_image, package_document, TempDir};
+    use crate::test_support::{capture_logs, encoded_image, package_document, TempDir};
 
     const HASH: &str = "0123abcd";
 
@@ -242,6 +281,69 @@ mod tests {
             .collect();
         names.sort();
         names
+    }
+
+    #[test]
+    fn pdfium_is_looked_for_beside_the_binary_first_then_in_the_working_directory() {
+        let folders = pdfium_folders(
+            Some(Path::new("/opt/bookserver/bookserver_backend")),
+            Some(Path::new("/home/me")),
+        );
+        assert_eq!(
+            folders,
+            [PathBuf::from("/opt/bookserver"), PathBuf::from("/home/me")]
+        );
+    }
+
+    #[test]
+    fn a_binary_started_in_its_own_folder_looks_there_once() {
+        let folders = pdfium_folders(
+            Some(Path::new("/opt/bookserver/bookserver_backend")),
+            Some(Path::new("/opt/bookserver")),
+        );
+        assert_eq!(folders, [PathBuf::from("/opt/bookserver")]);
+    }
+
+    #[test]
+    fn an_unknown_binary_or_working_directory_is_left_out() {
+        let working = Path::new("/home/me");
+        let binary = Path::new("/opt/bookserver/bookserver_backend");
+        assert_eq!(pdfium_folders(None, Some(working)), [working.to_path_buf()]);
+        assert_eq!(
+            pdfium_folders(Some(binary), None),
+            [PathBuf::from("/opt/bookserver")]
+        );
+        assert!(pdfium_folders(None, None).is_empty());
+    }
+
+    #[test]
+    fn a_folder_without_pdfium_is_passed_over_without_a_warning() {
+        let empty = TempDir::new();
+        fs::create_dir_all(empty.path()).unwrap();
+
+        let mut bound = None;
+        let logs = capture_logs(|| bound = bind_in(&[empty.path().to_path_buf()]));
+
+        assert!(bound.is_none());
+        assert!(!logs.contains("PDFium"), "{logs}");
+    }
+
+    #[test]
+    fn a_pdfium_library_that_does_not_load_is_warned_about_and_passed_over() {
+        let broken = TempDir::new();
+        let library = broken.write(
+            &Pdfium::pdfium_platform_library_name().to_string_lossy(),
+            b"not a library",
+        );
+
+        let mut bound = None;
+        let logs = capture_logs(|| bound = bind_in(&[broken.path().to_path_buf()]));
+
+        assert!(bound.is_none());
+        assert!(
+            logs.contains(&format!("PDFium at {} can't be loaded", library.display())),
+            "{logs}"
+        );
     }
 
     #[test]
