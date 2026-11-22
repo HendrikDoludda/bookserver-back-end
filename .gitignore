@@ -1,15 +1,12 @@
 # Build output
 /target
 
-# Local runtime data (created on first run)
+# Runtime data from before the data folder, and any DATA_DIR pointed into the repo
 /data/
+/cover_images/
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
-
-# Extracted cover images; only the bundled fallback is tracked
-/cover_images/*
-!/cover_images/example-cover.png
 
 # Environment / secrets
 *.env

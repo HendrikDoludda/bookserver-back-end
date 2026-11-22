@@ -13,6 +13,9 @@ use crate::{
 
 pub(crate) const DEFAULT_IMAGE: &str = "example-cover.png";
 
+/// The fallback cover, compiled in so a new cover folder can be given it.
+const DEFAULT_IMAGE_BYTES: &[u8] = include_bytes!("../../assets/example-cover.png");
+
 /// The extensions a cover can have; an existing cover is looked for under each.
 const COVER_EXTENSIONS: [&str; 4] = ["jpg", "png", "webp", "gif"];
 
@@ -27,15 +30,18 @@ pub struct Covers {
 }
 
 impl Covers {
-    /// Covers in `folder`, which is made if it is missing.
+    /// Covers in `folder`, which is made if it is missing, and given the fallback cover
+    /// ([`DEFAULT_IMAGE`]) if it lacks one; one it has is left as it is.
     // Kept with every symlink resolved: a directory being added is compared with it by real
     // location, which a missing folder doesn't have yet.
     pub fn in_folder(folder: &Path, pdfium: Option<Arc<Pdfium>>) -> io::Result<Self> {
         fs::create_dir_all(folder)?;
-        Ok(Covers {
-            folder: fs::canonicalize(folder)?,
-            pdfium,
-        })
+        let folder = fs::canonicalize(folder)?;
+        if !folder.join(DEFAULT_IMAGE).exists() {
+            write_whole(&folder, DEFAULT_IMAGE, DEFAULT_IMAGE_BYTES)
+                .map_err(|_| io::Error::other("writing the fallback cover failed"))?;
+        }
+        Ok(Covers { folder, pdfium })
     }
 
     /// The cover file a row names.
@@ -180,16 +186,22 @@ fn write_cover(
     data: &[u8],
 ) -> Result<String, CoverImageError> {
     let name = format!("{hash}.{extension}");
+    write_whole(folder, &name, data)?;
+    Ok(name)
+}
+
+/// Writes `data` to the file `name` in `folder`, under a temporary name first.
+fn write_whole(folder: &Path, name: &str, data: &[u8]) -> Result<(), CoverImageError> {
     create_folder(folder)?;
     // Renamed only once whole: a write cut short must not leave a file a later scan takes for a
     // finished cover. Two scans may write the same cover at once, so each has its own temp name.
     let partial = folder.join(format!(".{name}.{}.partial", Uuid::new_v4()));
-    let written = fs::write(&partial, data).and_then(|()| fs::rename(&partial, folder.join(&name)));
+    let written = fs::write(&partial, data).and_then(|()| fs::rename(&partial, folder.join(name)));
     if written.is_err() {
         let _ = fs::remove_file(&partial);
         return Err(CoverImageError::CoverCreationFailed);
     }
-    Ok(name)
+    Ok(())
 }
 
 fn create_folder(folder: &Path) -> Result<(), CoverImageError> {
@@ -230,6 +242,37 @@ mod tests {
             .collect();
         names.sort();
         names
+    }
+
+    #[test]
+    fn a_new_cover_folder_gets_the_fallback_cover_and_nothing_else() {
+        let dir = TempDir::new();
+
+        let covers = Covers::in_folder(&dir.path().join("covers"), None).unwrap();
+
+        assert_eq!(files_in(&covers.folder), [DEFAULT_IMAGE]);
+        assert_eq!(
+            fs::read(covers.path_of(DEFAULT_IMAGE)).unwrap(),
+            DEFAULT_IMAGE_BYTES
+        );
+        assert!(
+            image::load_from_memory(DEFAULT_IMAGE_BYTES).is_ok(),
+            "the compiled-in fallback is a readable image"
+        );
+    }
+
+    #[test]
+    fn a_fallback_cover_the_folder_has_is_left_as_it_is() {
+        let dir = TempDir::new();
+        dir.write(&format!("covers/{DEFAULT_IMAGE}"), b"one of its own");
+
+        let covers = Covers::in_folder(&dir.path().join("covers"), None).unwrap();
+
+        assert_eq!(
+            fs::read(covers.path_of(DEFAULT_IMAGE)).unwrap(),
+            b"one of its own"
+        );
+        assert_eq!(files_in(&covers.folder), [DEFAULT_IMAGE]);
     }
 
     #[test]

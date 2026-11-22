@@ -66,6 +66,7 @@ src/
 └── error_types.rs              typed error enums, one per domain
 migrations/                     SQL migrations (embedded at compile time)
 translations/                   UI and mail texts, one folder per language (embedded at compile time)
+assets/                         the fallback cover (embedded at compile time)
 docs/                           one design doc per feature
 ```
 
