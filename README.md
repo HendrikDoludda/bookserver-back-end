@@ -99,8 +99,8 @@ A few design choices worth calling out:
 **Run**
 
 ```sh
-git clone https://github.com/HendrikDoludda/bookserver_backend.git
-cd bookserver_backend
+git clone https://github.com/HendrikDoludda/bookserver-back-end.git
+cd bookserver-back-end
 cargo run
 
 curl http://localhost:8080/health                              # → pong
@@ -110,8 +110,9 @@ curl -X POST -H "Authorization: Bearer <session_token>" -H 'Content-Type: applic
 curl -H "Authorization: Bearer <session_token>" http://localhost:8080/api/v1/scan/status
 ```
 
-On first run the server creates its SQLite database at `./data/databases/app_data.sqlite`.
-Extracted covers are written to `./cover_images/`. While no account exists, the server logs a
+Everything the server writes — its SQLite database, the extracted covers and the generated
+`secrets.toml` — lies in one data folder, which the start log names (on macOS
+`~/Library/Application Support/com.hendrikdoludda.bookserver/`). While no account exists, the server logs a
 setup code at start; the first sign-up must send it and becomes the admin account. Its answer
 carries the `session_token` that adding a folder and scanning need (valid 15 minutes; log in
 again for a new one).
@@ -120,6 +121,7 @@ again for a new one).
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
+| `DATA_DIR` | the OS's data folder | The folder for the database, the covers and `secrets.toml`; made if missing |
 | `PORT` | `8080` | The port to listen on, 1–65535 |
 | `BIND_ADDRESS` | `0.0.0.0` | The IP address to listen on — every interface by default; `127.0.0.1` behind `tailscale serve` |
 | `SMTP_HOST` | unset | Mail server for verification and password-reset codes; email is off while unset |

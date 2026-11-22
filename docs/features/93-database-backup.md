@@ -10,4 +10,4 @@ whole library and its users. Optional — not scheduled.
 - [ ] ? h · Read the database path from one place — `Database::new` hard-codes it [BE]
 
 ## Open decisions
-- [ ] Back up the database only, or the database plus `./cover_images/`? — blocks: the backup endpoint. Suggested: the database only — covers can be re-extracted from the source files; the catalog and the user accounts can't.
+- [ ] Back up the database only, or the database plus the data folder's `covers/`? — blocks: the backup endpoint. Suggested: the database only — covers can be re-extracted from the source files; the catalog and the user accounts can't.

@@ -1,7 +1,7 @@
 use std::{
     env, fs,
     net::{IpAddr, Ipv4Addr, SocketAddr},
-    path::Path,
+    path::{Path, PathBuf},
     sync::Arc,
 };
 
@@ -15,7 +15,7 @@ use directories::ProjectDirs;
 use rand::rngs::SysRng;
 use rand::TryRng;
 
-/// Server secrets persisted in `secrets.toml` in the OS config directory.
+/// Server secrets persisted in `secrets.toml` in the data folder.
 #[derive(Serialize, Deserialize)]
 pub struct Secrets {
     token_signing_key: String,
@@ -34,21 +34,53 @@ impl Secrets {
     }
 }
 
-/// Loads `secrets.toml` from the OS config directory, generating it on first run.
-pub fn set_up_config_file() -> Result<Arc<Secrets>, ApplicationSetUpErrors> {
-    let project_dirs = ProjectDirs::from("com", "placeholder_organization", "bookserver_backend")
-        .ok_or(ApplicationSetUpErrors::NoConfigDirectory)?;
-    load_or_create_secrets(project_dirs.config_dir())
+/// The app's identifier, which names the default data folder.
+// Changing it moves that folder: an existing install would start empty, with a new signing key
+// that can't read its stored TOTP secrets.
+fn project_dirs() -> Option<ProjectDirs> {
+    ProjectDirs::from("com", "hendrikdoludda", "bookserver")
 }
 
-/// Loads `secrets.toml` from `config_dir`, generating it with a fresh 256-bit key on first run.
+/// The folder everything the server writes lies in — the database, the covers and
+/// `secrets.toml`: `DATA_DIR`, else the OS's local data folder for the app. It is made if
+/// missing, and answered as an absolute path.
+pub fn data_folder() -> Result<PathBuf, ApplicationSetUpErrors> {
+    data_folder_from(
+        |name| env::var(name).ok(),
+        || project_dirs().map(|dirs| dirs.data_local_dir().to_path_buf()),
+    )
+}
+
+/// Reads through `lookup` for the same reason `email_config_from` does: tests pass their own,
+/// and their own default folder.
+fn data_folder_from(
+    lookup: impl Fn(&'static str) -> Option<String>,
+    default: impl FnOnce() -> Option<PathBuf>,
+) -> Result<PathBuf, ApplicationSetUpErrors> {
+    let (folder, failure) = match lookup("DATA_DIR").filter(|value| !value.trim().is_empty()) {
+        Some(value) => (
+            PathBuf::from(value),
+            ApplicationSetUpErrors::InvalidSetting("DATA_DIR"),
+        ),
+        None => (
+            default().ok_or(ApplicationSetUpErrors::NoDataFolder)?,
+            ApplicationSetUpErrors::DirectoryCreationFailure,
+        ),
+    };
+    fs::create_dir_all(&folder).map_err(|_| failure)?;
+    // Not `canonicalize`: on Windows it answers `\\?\C:\…` paths, and the folders inside are
+    // canonicalised where they are compared (`Database::open`, `Covers::in_folder`).
+    std::path::absolute(&folder).map_err(|_| ApplicationSetUpErrors::DirectoryCreationFailure)
+}
+
+/// Loads `secrets.toml` from `folder`, generating it with a fresh 256-bit key on first run.
 /// The file is written to a temp path and then renamed, so a crash mid-write can't leave a
 /// half-written secrets file behind.
-fn load_or_create_secrets(config_dir: &Path) -> Result<Arc<Secrets>, ApplicationSetUpErrors> {
-    fs::create_dir_all(config_dir).map_err(|_| ApplicationSetUpErrors::DirectoryCreationFailure)?;
+pub fn load_or_create_secrets(folder: &Path) -> Result<Arc<Secrets>, ApplicationSetUpErrors> {
+    fs::create_dir_all(folder).map_err(|_| ApplicationSetUpErrors::DirectoryCreationFailure)?;
 
-    let secrets_path = config_dir.join("secrets.toml");
-    let secrets_tmp_path = config_dir.join("secrets.toml.tmp");
+    let secrets_path = folder.join("secrets.toml");
+    let secrets_tmp_path = folder.join("secrets.toml.tmp");
 
     if !secrets_path.exists() {
         let contents = create_new_set_up_secrets()?;
@@ -85,7 +117,7 @@ fn write_owner_only(path: &Path, contents: &str) -> Result<(), ApplicationSetUpE
         .map_err(|_| ApplicationSetUpErrors::DocumentWritingFailure)
 }
 
-// On Windows the config directory lies in the user's own profile, which other users can't read.
+// On Windows the default data folder lies in the user's own profile, which other users can't read.
 #[cfg(not(unix))]
 fn write_owner_only(path: &Path, contents: &str) -> Result<(), ApplicationSetUpErrors> {
     fs::write(path, contents).map_err(|_| ApplicationSetUpErrors::DocumentWritingFailure)
@@ -396,6 +428,84 @@ mod tests {
                 "{port}"
             );
         }
+    }
+
+    fn data(
+        settings: &[(&'static str, &str)],
+        default: Option<PathBuf>,
+    ) -> Result<PathBuf, ApplicationSetUpErrors> {
+        let settings: HashMap<&str, String> = settings
+            .iter()
+            .map(|(name, value)| (*name, value.to_string()))
+            .collect();
+        data_folder_from(|name| settings.get(name).cloned(), || default)
+    }
+
+    #[test]
+    fn data_dir_names_the_data_folder_and_it_is_made() {
+        let dir = TempDir::new();
+        let wanted = dir.path().join("nested").join("data");
+        let default = dir.path().join("default");
+
+        let folder = data(
+            &[("DATA_DIR", wanted.to_str().unwrap())],
+            Some(default.clone()),
+        )
+        .unwrap();
+
+        assert_eq!(folder, wanted);
+        assert!(folder.is_dir());
+        assert!(!default.exists(), "the default folder is left alone");
+    }
+
+    #[test]
+    fn without_data_dir_the_default_folder_is_made_and_used() {
+        for settings in [vec![], vec![("DATA_DIR", "  ")]] {
+            let dir = TempDir::new();
+            let default = dir.path().join("default");
+
+            let folder = data(&settings, Some(default.clone())).unwrap();
+
+            assert_eq!(folder, default);
+            assert!(folder.is_dir());
+        }
+    }
+
+    #[test]
+    fn a_data_dir_that_is_a_file_is_refused_by_name() {
+        let dir = TempDir::new();
+        let file = dir.write("not-a-folder", b"");
+
+        let result = data(&[("DATA_DIR", file.to_str().unwrap())], None);
+
+        assert!(matches!(
+            result,
+            Err(ApplicationSetUpErrors::InvalidSetting("DATA_DIR"))
+        ));
+    }
+
+    #[test]
+    fn without_data_dir_or_a_default_folder_the_start_stops() {
+        assert!(matches!(
+            data(&[], None),
+            Err(ApplicationSetUpErrors::NoDataFolder)
+        ));
+    }
+
+    #[test]
+    fn the_default_data_folder_is_named_after_the_permanent_identifier() {
+        let folder = project_dirs()
+            .expect("a home folder")
+            .data_local_dir()
+            .to_path_buf();
+        let expected = if cfg!(target_os = "macos") {
+            Path::new("Library/Application Support/com.hendrikdoludda.bookserver")
+        } else if cfg!(windows) {
+            Path::new(r"hendrikdoludda\bookserver\data")
+        } else {
+            Path::new("bookserver")
+        };
+        assert!(folder.ends_with(expected), "{folder:?}");
     }
 
     fn signing_key_in(dir: &TempDir) -> [u8; 32] {

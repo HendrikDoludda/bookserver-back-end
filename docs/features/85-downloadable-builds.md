@@ -9,8 +9,8 @@ folder, so it runs from wherever it was unpacked. Installers, Docker and HTTPS i
 server stay in [52](52-packaging-and-deployment.md).
 
 ## Build
-- [ ] 2 h · One data folder holds the database (`app_data.sqlite`), the covers (`covers/`) and `secrets.toml`: `DATA_DIR`, else the OS's local data folder for the identifier `com.hendrikdoludda.bookserver` (`ProjectDirs::from("com", "hendrikdoludda", "bookserver")`); a `DATA_DIR` that isn't a folder stops the start, naming it [BE]
-- [ ] 0.5 h · Log the version (`Cargo.toml`'s) and the data folder at start [BE]
+- [x] 2 h · One data folder holds the database (`app_data.sqlite`), the covers (`covers/`) and `secrets.toml`: `DATA_DIR`, else the OS's local data folder for the identifier `com.hendrikdoludda.bookserver` (`ProjectDirs::from("com", "hendrikdoludda", "bookserver")`); a `DATA_DIR` that isn't a folder stops the start, naming it [BE]
+- [x] 0.5 h · Log the version (`Cargo.toml`'s) and the data folder at start [BE]
 - [ ] 1 h · The fallback cover `example-cover.png` is compiled into the binary and written into the cover folder when it is missing [BE]
 - [ ] 1 h · Bind PDFium from the binary's folder first, then the working directory, then the system's library path [BE]
 - [ ] 0.5 h · `BIND_ADDRESS` defaults to `127.0.0.1` [BE]

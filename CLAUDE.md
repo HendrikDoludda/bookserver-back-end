@@ -281,8 +281,8 @@ A feature is `completed` only when every task is ticked and no checks file is le
 
 ## Destructive commands — warn first, every time
 
-Anything that drops rows, files or history — wiping `data/databases/app_data.sqlite`, clearing
-`cover_images/`, mass deletes, resets, force pushes — gets stated plainly and confirmed before
+Anything that drops rows, files or history — wiping the data folder's `app_data.sqlite`, clearing
+its `covers/`, mass deletes, resets, force pushes — gets stated plainly and confirmed before
 running. Not as a step inside a larger task, not to get a clean slate for a test. Flag them in
 `commands.md`.
 

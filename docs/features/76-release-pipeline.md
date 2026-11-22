@@ -8,8 +8,7 @@ State: blocked
 
 Every version tag produces signed macOS and Windows packages, published with release notes
 where installs — and the [updater](25-desktop-auto-update.md) — can fetch them. Nothing exists
-yet: no CI, no published builds, and the version in `Cargo.toml` (`0.1.0`) is read by nothing
-at runtime.
+yet: no CI and no published builds.
 
 ## Build
 - [ ] ? h · 85's release workflow also builds 52's `.dmg` and `.exe` for each version tag and publishes them with release notes on this repo's Releases [BE]

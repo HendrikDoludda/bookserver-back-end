@@ -41,9 +41,6 @@ pub enum DatabaseError {
     #[error("Could not initialize the database")]
     DatabaseInitializationFailure,
 
-    #[error("Could not create required directory for database creation")]
-    DirectoryCreationFailure,
-
     #[error("Could not establish a connection to the database")]
     FailedToConnectToDatabase,
 
@@ -95,7 +92,6 @@ impl DatabaseError {
         match self {
             DatabaseError::EntryNotFound => (StatusCode::NOT_FOUND, "not_found"),
             DatabaseError::DatabaseInitializationFailure
-            | DatabaseError::DirectoryCreationFailure
             | DatabaseError::FailedToConnectToDatabase
             | DatabaseError::ConnectionPoolFailure
             | DatabaseError::PoolConnectionRetrievalFailure
@@ -576,8 +572,8 @@ pub enum ApplicationSetUpErrors {
     DocumentReadingFailure,
     #[error("Deserializing the secret has failed")]
     SecretDeserializingError,
-    #[error("No Config folder found for this system")]
-    NoConfigDirectory,
+    #[error("this system names no folder for application data; set DATA_DIR")]
+    NoDataFolder,
     #[error("Renaming file failed")]
     RenamingFileFailure,
     #[error("the setting {0} is missing; it is required when SMTP_HOST is set")]
@@ -832,7 +828,6 @@ mod tests {
             EmailErrors::ClientBuilderFailed.into(),
             EmailErrors::SendingFailure.into(),
             DatabaseError::DatabaseInitializationFailure.into(),
-            DatabaseError::DirectoryCreationFailure.into(),
             DatabaseError::FailedToConnectToDatabase.into(),
             DatabaseError::ConnectionPoolFailure.into(),
             DatabaseError::PoolConnectionRetrievalFailure.into(),

@@ -180,8 +180,7 @@ impl TempDatabase {
         // the database's folder, where no directory may be added.
         let folder = TempDir::new();
         fs::create_dir_all(folder.path()).expect("make the database's folder");
-        let db = Database::open(&folder.path().join("app_data.sqlite"))
-            .expect("open a temp-file database");
+        let db = Database::in_folder(folder.path()).expect("open a temp-file database");
         Self {
             db: Arc::new(db),
             covers: TempDir::new(),

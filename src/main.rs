@@ -12,7 +12,7 @@ use bookserver_backend::routes::totp_cipher::TotpCipher;
 use bookserver_backend::scanner::cover_image_retriever::{bind_pdfium, Covers};
 use bookserver_backend::scanner::folder_watch::FolderWatch;
 use bookserver_backend::scanner::scan_jobs::ScanJobs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 #[tokio::main]
@@ -20,8 +20,14 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
     let listen_address = config::get_listen_address().context("The listen settings are invalid")?;
-    let db = Arc::new(Database::new().context("Failed to initialize the database")?);
-    let secrets = config::set_up_config_file().context("Failed to load secrets.toml")?;
+    let data = config::data_folder().context("The data folder can't be used")?;
+    tracing::info!(
+        "bookserver {}, data folder {}",
+        env!("CARGO_PKG_VERSION"),
+        data.display()
+    );
+    let db = Arc::new(Database::in_folder(&data).context("Failed to initialize the database")?);
+    let secrets = config::load_or_create_secrets(&data).context("Failed to load secrets.toml")?;
     let totp_cipher = TotpCipher::from_signing_key(&secrets.signing_key()?);
 
     let email = config::get_email_config().context("The SMTP_* settings are incomplete")?;
@@ -46,8 +52,8 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
-    let covers = Covers::in_folder(Path::new("./cover_images/"), bind_pdfium().map(Arc::new))
-        .context("Failed to create the cover folder ./cover_images/")?;
+    let covers = Covers::in_folder(&data.join("covers"), bind_pdfium().map(Arc::new))
+        .context("Failed to create the cover folder in the data folder")?;
     let scans = ScanJobs::start(Arc::clone(&db), covers.clone());
     let directories = Arc::clone(&db)
         .read(|conn| {

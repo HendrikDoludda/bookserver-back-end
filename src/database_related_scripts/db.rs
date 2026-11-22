@@ -85,12 +85,9 @@ pub(crate) fn each_equal<C>(columns: &[C]) -> Vec<(&C, Comparison)> {
 }
 
 impl Database {
-    pub fn new() -> Result<Self, DatabaseError> {
-        // Ensure the database folder exists
-        std::fs::create_dir_all("./data/databases/")
-            .map_err(|_| DatabaseError::DirectoryCreationFailure)?;
-
-        Self::open(Path::new("./data/databases/app_data.sqlite"))
+    /// Opens (or creates) `app_data.sqlite` in `folder`, which must exist.
+    pub fn in_folder(folder: &Path) -> Result<Self, DatabaseError> {
+        Self::open(&folder.join("app_data.sqlite"))
     }
 
     /// Opens (or creates) the database at `path`, applies any pending migrations and syncs the
@@ -889,7 +886,9 @@ pub fn checked_unix_time(time: SystemTime) -> Option<i64> {
 mod tests {
     use super::*;
     use crate::error_types::AuthenticationError;
-    use crate::test_support::{capture_logs, insert_user, memory_connection, TempDatabase};
+    use crate::test_support::{
+        capture_logs, insert_user, memory_connection, TempDatabase, TempDir,
+    };
 
     #[test]
     fn logged_logs_what_failed_with_its_cause_and_answers_the_given_error() {
@@ -1447,6 +1446,17 @@ mod tests {
             None,
             "its book lies in no directory"
         );
+    }
+
+    #[test]
+    fn a_database_in_a_folder_is_the_app_data_sqlite_in_it() {
+        let folder = TempDir::new();
+        std::fs::create_dir_all(folder.path()).unwrap();
+
+        let db = Database::in_folder(folder.path()).unwrap();
+
+        assert!(folder.path().join("app_data.sqlite").is_file());
+        assert_eq!(db.folder(), std::fs::canonicalize(folder.path()).unwrap());
     }
 
     #[test]

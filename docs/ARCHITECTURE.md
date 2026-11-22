@@ -3,7 +3,7 @@
 ## Where things live
 - `src/main.rs` — entry point: tracing, database, `start_server`.
 - `src/lib.rs` — module declarations; re-exports `data_models::models` and `database_related_scripts::db`, so `crate::models::…` and `crate::db::…` resolve.
-- `src/config.rs` — env-var readers and the generated `secrets.toml` (in the OS config directory).
+- `src/config.rs` — env-var readers, the data folder (`data_folder`) and the generated `secrets.toml` in it.
 - `src/app_state.rs` — `AppState`, the router state (database, mailer, setup code, TOTP cipher, covers, scan jobs, folder watch); handlers take their part through `FromRef` (`State<Arc<Database>>`, `State<Mailer>`, `State<SetupCode>`, `State<TotpCipher>`, `State<Covers>`, `State<ScanJobs>`, `State<FolderWatch>`).
 - `src/routes/api_routes.rs` — the route table (`set_up_routes`) and `start_server`.
 - `src/routes/api_caller/` — the handlers, one file per area (`authentication.rs`, `account.rs`, `settings.rs`, `totp.rs`, `library.rs`, `directories.rs`, `scans.rs`, `users.rs`, `locales.rs`); `extractors.rs` holds the request extractors — the session ones (`AuthSession`, `AdminSession`, `AuthTOTPLoginSession`, `AuthRefreshSession`) and `JsonBody` / `PathParams` / `QueryParams`, and `helpers.rs` the shared response builders: `ping_server` (the liveness check), `not_implemented` (every route without a handler yet) and the router's fallbacks `not_found` / `method_not_allowed`.
@@ -17,7 +17,6 @@
 - `src/test_support.rs` — shared test fixtures, compiled only for tests.
 - `migrations/` — numbered SQL files, embedded at compile time.
 - `translations/` — the shipped translations, embedded at compile time: `<language>/language.json`, and one JSON file per namespace under `frontend/` (sent to the apps) or `backend/` (rendered by the server).
-- Runtime data, git-ignored: `data/databases/app_data.sqlite`, `cover_images/` (except the `example-cover.png` fallback).
 
 ## API
 - API-first: every change to data is an HTTP endpoint; the frontend and the admin view are both clients of that same API, no endpoint is reachable from only one of them, and business logic stays in the backend.
@@ -62,6 +61,7 @@
 - A rusqlite error is logged once, where it becomes a `DatabaseError` — `map_err(logged(action, what, variant))` (`db.rs`); callers don't log it again.
 
 ## Files
+- Everything the server writes — `app_data.sqlite`, `covers/`, `secrets.toml` — lies in the data folder (`config::data_folder`: `DATA_DIR`, else the OS's local data folder for `com.hendrikdoludda.bookserver`), never in the working directory or the repo.
 - Files are served by row id, never by a path the client supplies.
 - A cover row names a bare file in the cover folder that `AppState` holds (`Covers::path_of`), never a path.
 - A cover file is written under a temporary name and renamed into place (`write_cover`), so it is whole or absent.
