@@ -318,3 +318,4 @@ on the situation, it is not a rule — ask the developer to sharpen it into one,
 | Axum route params are `{param}`, never `:param` | Axum 0.8 panics while building the router, before the port opens |
 | A column name in `Extract::COLUMNS` must match the `row.get("…")` in `FromRow` exactly | A mismatch compiles fine and fails only at runtime |
 | Never commit `data/` | The SQLite file holds local file paths and user rows; git history had to be rewritten once |
+| Hand-run SQL that deletes rows starts with `PRAGMA foreign_keys = ON` | `sqlite3` starts with foreign keys off: `ON DELETE` never fires, and an id left pointing at a deleted row fails the server's next insert |

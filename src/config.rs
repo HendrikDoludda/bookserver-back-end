@@ -158,14 +158,6 @@ fn listen_address_from(
     Ok(SocketAddr::new(address, port))
 }
 
-pub fn get_books_dirs() -> Vec<String> {
-    env::var("BOOK_DIRS")
-        .unwrap_or_else(|_| "../Downloads".to_string())
-        .split(':')
-        .map(|s| s.trim().to_string())
-        .collect()
-}
-
 pub fn get_api_key() -> Option<String> {
     env::var("API_KEY").ok()
 }

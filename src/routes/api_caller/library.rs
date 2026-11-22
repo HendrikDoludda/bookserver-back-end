@@ -1,5 +1,4 @@
-//! TODO: needs a database table of scannable directories (replacing `BOOK_DIRS`),
-//!       with a link to the metadata-agent result.
+//! TODO: link each scannable directory to its metadata-agent result.
 //! TODO: check that served file paths lie inside a scannable directory or the
 //!       cover-images folder.
 

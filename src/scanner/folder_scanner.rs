@@ -11,14 +11,13 @@ use regex::Regex;
 use tokio::{fs, sync::Semaphore};
 use tracing::{error, warn};
 
-use crate::config;
 use crate::data_models::models::{
     BookDatabaseColumns, BookFormat, BookLanguage, BookMetadata, BookSeriesMetadata,
-    ColumnSelector, DatabaseTypes, FileExtractedMetadata, LibraryDatabaseColumns, LibraryMetadata,
-    LibraryType, ParsedName, SeriesLibraryConnection,
+    ColumnSelector, DatabaseTypes, Directory, FileExtractedMetadata, ParsedName,
+    SeriesLibraryConnection,
 };
 use crate::db::Database;
-use crate::error_types::{DatabaseError, FolderScannerError};
+use crate::error_types::FolderScannerError;
 use crate::scanner::comic_info;
 use crate::scanner::cover_image_retriever::{cover_for, Covers};
 
@@ -32,17 +31,21 @@ static CHAPTER_REGEX: Lazy<Regex> =
 static PAGE_REGEX: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?i)\b(?:p|pa|page)[ _]?(\d+)\b").unwrap());
 
-/// Scans every directory in `BOOK_DIRS` for supported files and creates database
-/// entries for them. Each directory becomes (or reuses) a library.
+/// Scans every added directory for supported files and creates database entries for them.
 pub async fn scan_all_folders(db: Arc<Database>, covers: Covers) -> anyhow::Result<()> {
-    let folders = config::get_books_dirs();
+    let directories = Arc::clone(&db)
+        .read(|conn| {
+            Ok(Database::get_all_entries_with_connection::<Directory>(
+                conn,
+            )?)
+        })
+        .await?;
 
-    for folder in folders {
-        let library_id = get_library_id(folder.clone(), &db)?;
+    for directory in directories {
         scan_folder(
-            PathBuf::from(folder),
+            PathBuf::from(directory.data.path),
             db.clone(),
-            library_id,
+            directory.id,
             covers.clone(),
         )
         .await?;
@@ -51,12 +54,12 @@ pub async fn scan_all_folders(db: Arc<Database>, covers: Covers) -> anyhow::Resu
     Ok(())
 }
 
-/// Walks one directory tree and creates a book entry for each supported file.
-/// File processing runs on the blocking thread pool, gated by a semaphore.
+/// Walks the tree of the directory `directory_id`, at `path`, and creates a book entry for each
+/// supported file. File processing runs on the blocking thread pool, gated by a semaphore.
 pub async fn scan_folder(
     path: PathBuf,
     db: Arc<Database>,
-    library_id: i64,
+    directory_id: i64,
     covers: Covers,
 ) -> Result<(), FolderScannerError> {
     let semaphore = Arc::new(Semaphore::new(1)); // limit concurrency
@@ -89,7 +92,7 @@ pub async fn scan_folder(
                     let _permit = permit;
 
                     if let Err(e) = tokio::task::spawn_blocking(move || {
-                        create_book_entry(&entry_path, &db, library_id, &covers)
+                        create_book_entry(&entry_path, &db, directory_id, &covers)
                     })
                     .await
                     {
@@ -103,12 +106,12 @@ pub async fn scan_folder(
     Ok(())
 }
 
-/// Creates the database entry (plus series and cover image) for one file.
-/// Unsupported files and files already in the database are skipped.
+/// Creates the database entry (plus series and cover image) for one file of the directory
+/// `directory_id`. Unsupported files and files already in the database are skipped.
 fn create_book_entry(
     path: &Path,
     db: &Database,
-    library_id: i64,
+    directory_id: i64,
     covers: &Covers,
 ) -> Result<(), FolderScannerError> {
     if !is_valid_file_type(path) {
@@ -135,7 +138,7 @@ fn create_book_entry(
     }
 
     let parsed_name = get_final_file_name(&final_path);
-    let series_id = get_series_id(&parsed_name.title, db, library_id)?;
+    let series_id = get_series_id(&parsed_name.title, db, directory_id)?;
     let cover_image = cover_for(covers, &final_path, &format, file_hash.as_deref());
     let reading_direction = comic_info::reading_direction(&format, &final_path);
 
@@ -157,7 +160,7 @@ fn create_book_entry(
         last_modified: metadata.modified_date,
         file_size: metadata.file_size,
         reading_direction,
-        directory_id: None,
+        directory_id: Some(directory_id),
     };
 
     db.insert(&metadata_entry)
@@ -292,16 +295,22 @@ fn hash_file(mut file: File) -> io::Result<String> {
     Ok(hasher.finalize().to_hex().to_string())
 }
 
-/// The series a book titled `title` joins: the one whose match key is the title lowercased, else a
-/// new one named as found and put into the library. A database error fails the book, as a lookup
-/// that answered "none" would make a second series.
-fn get_series_id(title: &str, db: &Database, library_id: i64) -> Result<i64, FolderScannerError> {
+/// The series a book titled `title` joins: the one whose match key is the title lowercased and that
+/// holds a book of the same directory, else a new one named as found and put into the directory's
+/// library, if it has one. A database error fails the book, as a lookup that answered "none" would
+/// make a second series.
+fn get_series_id(title: &str, db: &Database, directory_id: i64) -> Result<i64, FolderScannerError> {
     // Lowercased in Rust, which knows every alphabet: "ÄRGER v02" finds "Ärger".
     let key = title.to_lowercase();
     db.setup_new_transaction(|conn| {
-        if let Some(id) = Database::series_by_match_key_with_connection(conn, &key)? {
+        if let Some(id) =
+            Database::series_of_directory_by_match_key_with_connection(conn, directory_id, &key)?
+        {
             return Ok(id);
         }
+        // Read here rather than when the scan started: the library may have been deleted since,
+        // and linking to it would fail the book.
+        let directory = Database::get_entry_with_connection::<Directory>(conn, directory_id)?;
         let id = Database::insert_with_connection(
             conn,
             &BookSeriesMetadata {
@@ -313,13 +322,15 @@ fn get_series_id(title: &str, db: &Database, library_id: i64) -> Result<i64, Fol
                 end_release_year: None,
             },
         )?;
-        Database::insert_with_connection(
-            conn,
-            &SeriesLibraryConnection {
-                series_id: id,
-                library_id,
-            },
-        )?;
+        if let Some(library_id) = directory.library_id {
+            Database::insert_with_connection(
+                conn,
+                &SeriesLibraryConnection {
+                    series_id: id,
+                    library_id,
+                },
+            )?;
+        }
         Ok(id)
     })
     .map_err(|error| {
@@ -328,30 +339,12 @@ fn get_series_id(title: &str, db: &Database, library_id: i64) -> Result<i64, Fol
     })
 }
 
-fn get_library_id(name: String, db: &Database) -> Result<i64, DatabaseError> {
-    match db.get_id_from_table(
-        DatabaseTypes::Library,
-        ColumnSelector::Library(LibraryDatabaseColumns::Name),
-        &name.to_lowercase(),
-    ) {
-        Ok(Some(result)) => Ok(result),
-        Ok(None) | Err(_) => create_library_entry(name, db),
-    }
-}
-
-fn create_library_entry(name: String, db: &Database) -> Result<i64, DatabaseError> {
-    let library_entry = LibraryMetadata {
-        name: name.to_lowercase(),
-        library_type: LibraryType::Books,
-        cover_image: None,
-        description: None,
-    };
-    db.insert(&library_entry)
-}
-
 #[cfg(test)]
 mod tests {
+    use std::time::SystemTime;
+
     use super::*;
+    use crate::data_models::models::{LibraryMetadata, LibraryType};
     use crate::test_support::{TempDatabase, TempDir};
 
     const RIGHT_TO_LEFT: &[u8] = b"<ComicInfo><Manga>YesAndRightToLeft</Manga></ComicInfo>";
@@ -376,12 +369,41 @@ mod tests {
         }
     }
 
+    /// A directory row for `folder` whose new series join `library_id`; answers its id.
+    fn add_directory(db: &Database, folder: &Path, library_id: Option<i64>) -> i64 {
+        db.insert(&Directory {
+            path: folder.to_string_lossy().into_owned(),
+            library_id,
+            created_at: SystemTime::now(),
+        })
+        .unwrap()
+    }
+
+    fn add_library(db: &Database, name: &str) -> i64 {
+        db.insert(&LibraryMetadata {
+            name: name.to_string(),
+            library_type: LibraryType::Books,
+            cover_image: None,
+            description: None,
+        })
+        .unwrap()
+    }
+
+    /// Runs one statement, as a change made outside the scanner would.
+    fn sql(db: &Database, statement: &str) {
+        db.setup_new_transaction(|conn| {
+            conn.execute(statement, []).unwrap();
+            Ok(())
+        })
+        .unwrap();
+    }
+
     #[test]
     fn a_scanned_cbz_keeps_the_direction_its_comic_info_states() {
         let dir = TempDir::new();
         let covers = covers_in(&dir);
         let temp = TempDatabase::open();
-        let library_id = create_library_entry("manga".to_string(), &temp.db).unwrap();
+        let directory = add_directory(&temp.db, dir.path(), None);
         let berserk = dir.write_cbz(
             "Berserk v01.cbz",
             &[
@@ -391,8 +413,8 @@ mod tests {
         );
         let pluto = dir.write_cbz("Pluto v01.cbz", &[("001.jpg", b"not a picture")]);
 
-        create_book_entry(&berserk, &temp.db, library_id, &covers).unwrap();
-        create_book_entry(&pluto, &temp.db, library_id, &covers).unwrap();
+        create_book_entry(&berserk, &temp.db, directory, &covers).unwrap();
+        create_book_entry(&pluto, &temp.db, directory, &covers).unwrap();
 
         assert_eq!(stored_direction(&temp.db, &berserk).as_deref(), Some("rtl"));
         assert_eq!(stored_direction(&temp.db, &pluto), None);
@@ -416,10 +438,10 @@ mod tests {
         let dir = TempDir::new();
         let covers = covers_in(&dir);
         let temp = TempDatabase::open();
-        let library_id = create_library_entry("books".to_string(), &temp.db).unwrap();
+        let directory = add_directory(&temp.db, dir.path(), None);
         let pdf = dir.write("Berserk v01.pdf", b"%PDF-1.7 tiny");
 
-        create_book_entry(&pdf, &temp.db, library_id, &covers).unwrap();
+        create_book_entry(&pdf, &temp.db, directory, &covers).unwrap();
 
         assert_eq!(stored_cover(&temp.db, &pdf), None);
     }
@@ -429,7 +451,7 @@ mod tests {
         let dir = TempDir::new();
         let covers = covers_in(&dir);
         let temp = TempDatabase::open();
-        let library_id = create_library_entry("books".to_string(), &temp.db).unwrap();
+        let directory = add_directory(&temp.db, dir.path(), None);
         let epub = dir.write_cbz(
             "Dune v01.epub",
             &[(
@@ -438,7 +460,7 @@ mod tests {
             )],
         );
 
-        create_book_entry(&epub, &temp.db, library_id, &covers).unwrap();
+        create_book_entry(&epub, &temp.db, directory, &covers).unwrap();
 
         assert_eq!(stored_cover(&temp.db, &epub), None);
     }
@@ -470,6 +492,33 @@ mod tests {
         .unwrap()
     }
 
+    fn directory_of(db: &Database, file_path: &Path) -> Option<i64> {
+        db.setup_new_transaction(|conn| {
+            Ok(conn
+                .query_row(
+                    "SELECT directory_id FROM books WHERE file_path = ?1",
+                    [file_path.to_string_lossy()],
+                    |row| row.get(0),
+                )
+                .unwrap())
+        })
+        .unwrap()
+    }
+
+    /// Every library link as `(library_id, series_id)`, in the order they were made.
+    fn links(db: &Database) -> Vec<(i64, i64)> {
+        db.setup_new_transaction(|conn| {
+            Ok(conn
+                .prepare("SELECT library_id, series_id FROM library_elements ORDER BY rowid")
+                .unwrap()
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap())
+        })
+        .unwrap()
+    }
+
     fn count(db: &Database, table: &str) -> i64 {
         db.setup_new_transaction(|conn| {
             Ok(conn
@@ -481,15 +530,15 @@ mod tests {
         .unwrap()
     }
 
-    /// Scans each of `names` as a one-page CBZ into one library; answers their paths.
-    fn scan_books(dir: &TempDir, db: &Database, names: &[&str]) -> Vec<PathBuf> {
+    /// Scans each of `names` as a one-page CBZ in `dir`, a file of the directory `directory`;
+    /// answers their paths.
+    fn scan_books(dir: &TempDir, db: &Database, directory: i64, names: &[&str]) -> Vec<PathBuf> {
         let covers = covers_in(dir);
-        let library_id = create_library_entry("manga".to_string(), db).unwrap();
         names
             .iter()
             .map(|name| {
                 let book = dir.write_cbz(name, &[("001.jpg", b"not a picture")]);
-                create_book_entry(&book, db, library_id, &covers).unwrap();
+                create_book_entry(&book, db, directory, &covers).unwrap();
                 book
             })
             .collect()
@@ -499,8 +548,14 @@ mod tests {
     fn a_series_is_named_as_found_and_a_volume_in_other_capitals_joins_it() {
         let dir = TempDir::new();
         let temp = TempDatabase::open();
+        let directory = add_directory(&temp.db, dir.path(), None);
 
-        let books = scan_books(&dir, &temp.db, &["Berserk v01.cbz", "BERSERK v02.cbz"]);
+        let books = scan_books(
+            &dir,
+            &temp.db,
+            directory,
+            &["Berserk v01.cbz", "BERSERK v02.cbz"],
+        );
 
         assert_eq!(
             series_rows(&temp.db),
@@ -510,15 +565,20 @@ mod tests {
             series_of(&temp.db, &books[0]),
             series_of(&temp.db, &books[1])
         );
-        assert_eq!(count(&temp.db, "library_elements"), 1);
     }
 
     #[test]
     fn letters_beyond_ascii_match_in_any_case() {
         let dir = TempDir::new();
         let temp = TempDatabase::open();
+        let directory = add_directory(&temp.db, dir.path(), None);
 
-        let books = scan_books(&dir, &temp.db, &["Ärger v01.cbz", "ÄRGER v02.cbz"]);
+        let books = scan_books(
+            &dir,
+            &temp.db,
+            directory,
+            &["Ärger v01.cbz", "ÄRGER v02.cbz"],
+        );
 
         assert_eq!(
             series_rows(&temp.db),
@@ -534,7 +594,8 @@ mod tests {
     fn a_renamed_series_still_collects_new_volumes() {
         let dir = TempDir::new();
         let temp = TempDatabase::open();
-        let first = scan_books(&dir, &temp.db, &["Berserk v01.cbz"]);
+        let directory = add_directory(&temp.db, dir.path(), None);
+        let first = scan_books(&dir, &temp.db, directory, &["Berserk v01.cbz"]);
         let series_id = series_of(&temp.db, &first[0]).unwrap();
         // As `PATCH /series/{id}` renames it: the name only.
         temp.db
@@ -549,7 +610,7 @@ mod tests {
             })
             .unwrap();
 
-        let second = scan_books(&dir, &temp.db, &["Berserk v02.cbz"]);
+        let second = scan_books(&dir, &temp.db, directory, &["Berserk v02.cbz"]);
 
         assert_eq!(series_of(&temp.db, &second[0]), Some(series_id));
         assert_eq!(
@@ -562,19 +623,16 @@ mod tests {
     fn a_failing_series_lookup_stores_no_book_and_no_second_series() {
         let dir = TempDir::new();
         let temp = TempDatabase::open();
-        scan_books(&dir, &temp.db, &["Berserk v01.cbz"]);
+        let directory = add_directory(&temp.db, dir.path(), None);
+        scan_books(&dir, &temp.db, directory, &["Berserk v01.cbz"]);
         // Without its column, every lookup answers an error.
-        temp.db
-            .setup_new_transaction(|conn| {
-                conn.execute("ALTER TABLE series RENAME COLUMN match_key TO lost", [])
-                    .unwrap();
-                Ok(())
-            })
-            .unwrap();
-        let library_id = create_library_entry("manga".to_string(), &temp.db).unwrap();
+        sql(
+            &temp.db,
+            "ALTER TABLE series RENAME COLUMN match_key TO lost",
+        );
         let second = dir.write_cbz("Berserk v02.cbz", &[("001.jpg", b"not a picture")]);
 
-        let result = create_book_entry(&second, &temp.db, library_id, &covers_in(&dir));
+        let result = create_book_entry(&second, &temp.db, directory, &covers_in(&dir));
 
         assert!(matches!(
             result,
@@ -593,14 +651,115 @@ mod tests {
         let dir = TempDir::new();
         let covers = covers_in(&dir);
         let temp = TempDatabase::open();
-        let library_id = create_library_entry("manga".to_string(), &temp.db).unwrap();
+        let directory = add_directory(&temp.db, dir.path(), None);
         let page = crate::test_support::encoded_image(image::ImageFormat::Png, 2, 3);
         let cbz = dir.write_cbz("Berserk v01.cbz", &[("001.png", &page)]);
 
-        create_book_entry(&cbz, &temp.db, library_id, &covers).unwrap();
+        create_book_entry(&cbz, &temp.db, directory, &covers).unwrap();
 
         let name = stored_cover(&temp.db, &cbz).expect("a cover");
         assert!(!name.contains('/'), "a bare file name: {name}");
         assert_eq!(std::fs::read(covers.path_of(&name)).unwrap(), page);
+    }
+
+    #[test]
+    fn a_book_belongs_to_its_directory_and_its_name_in_another_is_another_series() {
+        let manga_folder = TempDir::new();
+        let comics_folder = TempDir::new();
+        let temp = TempDatabase::open();
+        let manga = add_directory(&temp.db, manga_folder.path(), None);
+        let comics = add_directory(&temp.db, comics_folder.path(), None);
+
+        let in_manga = scan_books(
+            &manga_folder,
+            &temp.db,
+            manga,
+            &["Berserk v01.cbz", "Berserk v02.cbz"],
+        );
+        let in_comics = scan_books(&comics_folder, &temp.db, comics, &["Berserk v01.cbz"]);
+
+        assert_eq!(directory_of(&temp.db, &in_manga[1]), Some(manga));
+        assert_eq!(directory_of(&temp.db, &in_comics[0]), Some(comics));
+        assert_eq!(
+            series_of(&temp.db, &in_manga[0]),
+            series_of(&temp.db, &in_manga[1])
+        );
+        assert_ne!(
+            series_of(&temp.db, &in_manga[0]),
+            series_of(&temp.db, &in_comics[0])
+        );
+        let berserk = ("Berserk".to_string(), "berserk".to_string());
+        assert_eq!(series_rows(&temp.db), [berserk.clone(), berserk]);
+        assert!(
+            links(&temp.db).is_empty(),
+            "neither directory has a library"
+        );
+    }
+
+    #[test]
+    fn a_new_series_joins_its_directorys_library_once_and_one_taken_out_stays_out() {
+        let dir = TempDir::new();
+        let temp = TempDatabase::open();
+        let library = add_library(&temp.db, "Manga");
+        let directory = add_directory(&temp.db, dir.path(), Some(library));
+
+        let first = scan_books(
+            &dir,
+            &temp.db,
+            directory,
+            &["Berserk v01.cbz", "Berserk v02.cbz"],
+        );
+        let berserk = series_of(&temp.db, &first[0]).unwrap();
+        assert_eq!(links(&temp.db), [(library, berserk)]);
+
+        // As `DELETE /libraries/{id}/series/{series_id}` takes it out.
+        sql(&temp.db, "DELETE FROM library_elements");
+        let later = scan_books(
+            &dir,
+            &temp.db,
+            directory,
+            &["Berserk v03.cbz", "Monster v01.cbz"],
+        );
+
+        assert_eq!(series_of(&temp.db, &later[0]), Some(berserk));
+        let monster = series_of(&temp.db, &later[1]).unwrap();
+        assert_eq!(links(&temp.db), [(library, monster)], "only the new series");
+    }
+
+    #[test]
+    fn a_series_found_after_its_directorys_library_was_deleted_joins_none() {
+        let dir = TempDir::new();
+        let temp = TempDatabase::open();
+        let library = add_library(&temp.db, "Manga");
+        let directory = add_directory(&temp.db, dir.path(), Some(library));
+        // As `DELETE /libraries/{id}` does: the directory stays, without its library.
+        sql(
+            &temp.db,
+            &format!("DELETE FROM library WHERE id = {library}"),
+        );
+
+        let books = scan_books(&dir, &temp.db, directory, &["Monster v01.cbz"]);
+
+        assert!(series_of(&temp.db, &books[0]).is_some());
+        assert!(links(&temp.db).is_empty());
+    }
+
+    #[test]
+    fn a_file_of_a_directory_removed_meanwhile_makes_no_series_and_no_book() {
+        let dir = TempDir::new();
+        let temp = TempDatabase::open();
+        let directory = add_directory(&temp.db, dir.path(), None);
+        // As `DELETE /directories/{id}` does while a scan of it still runs.
+        sql(&temp.db, "DELETE FROM directories");
+        let book = dir.write_cbz("Berserk v01.cbz", &[("001.jpg", b"not a picture")]);
+
+        let result = create_book_entry(&book, &temp.db, directory, &covers_in(&dir));
+
+        assert!(matches!(
+            result,
+            Err(FolderScannerError::SeriesInsertionFailed)
+        ));
+        assert_eq!(count(&temp.db, "series"), 0);
+        assert_eq!(count(&temp.db, "books"), 0);
     }
 }

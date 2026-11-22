@@ -593,14 +593,18 @@ impl Database {
         Ok(libraries)
     }
 
-    /// The series whose match key is `key` — the oldest, should there be several — or `None`.
-    pub fn series_by_match_key_with_connection(
+    /// The series whose match key is `key` and that holds a book of the directory — the oldest,
+    /// should there be several — or `None`.
+    pub fn series_of_directory_by_match_key_with_connection(
         conn: &Connection,
+        directory_id: i64,
         key: &str,
     ) -> Result<Option<i64>, DatabaseError> {
         conn.query_row(
-            "SELECT id FROM series WHERE match_key = ?1 ORDER BY id LIMIT 1",
-            [key],
+            "SELECT id FROM series WHERE match_key = ?1 AND EXISTS \
+             (SELECT 1 FROM books WHERE books.series = series.id AND books.directory_id = ?2) \
+             ORDER BY id LIMIT 1",
+            rusqlite::params![key, directory_id],
             |row| row.get(0),
         )
         .optional()
@@ -1335,6 +1339,49 @@ mod tests {
         assert_eq!(
             Database::series_of_directory_with_connection(&conn, manga + 99).unwrap(),
             Vec::<i64>::new()
+        );
+    }
+
+    #[test]
+    fn a_series_is_found_by_its_match_key_only_where_it_holds_a_book_of_the_directory() {
+        let conn = memory_connection();
+        let manga = insert_directory(&conn, "/manga");
+        let comics = insert_directory(&conn, "/comics");
+        let keyed = |name: &str| -> i64 {
+            conn.execute(
+                "INSERT INTO series (name, match_key) VALUES (?1, lower(?1))",
+                [name],
+            )
+            .unwrap();
+            conn.last_insert_rowid()
+        };
+        let berserk_in_manga = keyed("Berserk");
+        let berserk_in_comics = keyed("Berserk");
+        let younger_in_manga = keyed("BERSERK");
+        keyed("Pluto");
+        let unplaced = keyed("Monster");
+        for (series, directory) in [
+            (berserk_in_manga, manga),
+            (berserk_in_comics, comics),
+            (younger_in_manga, manga),
+        ] {
+            let book = insert_book(&conn, series, "Berserk", None, None);
+            place(&conn, book, directory);
+        }
+        insert_book(&conn, unplaced, "Monster", None, None);
+        let find = |directory: i64, key: &str| {
+            Database::series_of_directory_by_match_key_with_connection(&conn, directory, key)
+                .unwrap()
+        };
+
+        assert_eq!(find(manga, "berserk"), Some(berserk_in_manga), "the oldest");
+        assert_eq!(find(comics, "berserk"), Some(berserk_in_comics));
+        assert_eq!(find(manga, "Berserk"), None, "the caller lowercases");
+        assert_eq!(find(manga, "pluto"), None, "a series without books");
+        assert_eq!(
+            find(manga, "monster"),
+            None,
+            "its book lies in no directory"
         );
     }
 

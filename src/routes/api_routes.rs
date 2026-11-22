@@ -278,7 +278,7 @@ mod tests {
         assert_eq!(status, StatusCode::NO_CONTENT);
         assert!(body.is_empty());
 
-        // A GET proves the path exists without starting a scan of the real BOOK_DIRS.
+        // A GET proves the path exists without starting a scan.
         let (status, _, _) = call(&app, bare("GET", "/api/v1/scan")).await;
         assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
 
@@ -2942,13 +2942,29 @@ mod tests {
                 .unwrap()
         };
 
-        // Refused before the handler runs, so no scan of the real `BOOK_DIRS` starts.
         for (method, uri) in [("POST", "/api/v1/scan"), ("DELETE", delete.as_str())] {
             let (status, _, body) = call(&app, authorized(method, uri, &member, None)).await;
             assert_eq!(status, StatusCode::FORBIDDEN, "{method} {uri}");
             assert_eq!(json(&body), serde_json::json!({ "error": "forbidden" }));
         }
         assert_eq!(libraries(&temp), 1, "a member deletes nothing");
+
+        // An empty folder, so the scan is over before the answer comes.
+        let folder = TempDir::new();
+        std::fs::create_dir_all(folder.path()).unwrap();
+        temp.db
+            .setup_new_transaction(|conn| {
+                conn.execute(
+                    "INSERT INTO directories (path) VALUES (?1)",
+                    [folder.path().to_string_lossy()],
+                )
+                .unwrap();
+                Ok(())
+            })
+            .unwrap();
+        let (status, _, _) = call(&app, authorized("POST", "/api/v1/scan", &admin, None)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(libraries(&temp), 1, "a scan makes no library");
 
         let (status, _, _) = call(&app, authorized("DELETE", &delete, &admin, None)).await;
         assert_eq!(status, StatusCode::NO_CONTENT);

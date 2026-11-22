@@ -101,16 +101,20 @@ A few design choices worth calling out:
 ```sh
 git clone https://github.com/HendrikDoludda/bookserver_backend.git
 cd bookserver_backend
-BOOK_DIRS=/path/to/books cargo run
+cargo run
 
 curl http://localhost:8080/health                              # → pong
+curl -X POST -H "Authorization: Bearer <session_token>" -H 'Content-Type: application/json' \
+  -d '{"path":"/path/to/books","create_library":true,"library_type":"books"}' \
+  http://localhost:8080/api/v1/directories
 curl -X POST -H "Authorization: Bearer <session_token>" http://localhost:8080/api/v1/scan
 ```
 
 On first run the server creates its SQLite database at `./data/databases/app_data.sqlite`.
 Extracted covers are written to `./cover_images/`. While no account exists, the server logs a
 setup code at start; the first sign-up must send it and becomes the admin account. Its answer
-carries the `session_token` that scanning needs (valid 15 minutes; log in again for a new one).
+carries the `session_token` that adding a folder and scanning need (valid 15 minutes; log in
+again for a new one).
 
 **Configuration** (environment variables)
 
@@ -118,7 +122,6 @@ carries the `session_token` that scanning needs (valid 15 minutes; log in again 
 | --- | --- | --- |
 | `PORT` | `8080` | The port to listen on, 1–65535 |
 | `BIND_ADDRESS` | `0.0.0.0` | The IP address to listen on — every interface by default; `127.0.0.1` behind `tailscale serve` |
-| `BOOK_DIRS` | `../Downloads` | `:`-separated list of directories to scan |
 | `SMTP_HOST` | unset | Mail server for verification and password-reset codes; email is off while unset |
 | `SMTP_PORT`, `SMTP_FROM`, `SMTP_FROM_NAME` | unset | Required once `SMTP_HOST` is set |
 | `SMTP_USERNAME`, `SMTP_PASSWORD` | unset | The mail server's login, set together; leave both out for a server without one |
@@ -154,7 +157,7 @@ library or a series also need an admin (403 for a member). Implemented endpoints
 | `GET` | `/api/v1/books/{id}/pages` | The pages of an image-folder or CBZ book, `[{"number": 1}, …]`, in natural order of their file names; `404 not_found` for other formats |
 | `GET` | `/api/v1/books/{id}/pages/{number}` | One page's image, counted from 1 |
 | `GET` | `/api/v1/covers/{kind}/{id}` | The cover of a `book`, `series` or `library`; a series or library without its own shows its first book's, in reading order; `404 not_found` when there is none |
-| `POST` | `/api/v1/scan` | Scan `BOOK_DIRS` and catalog new files |
+| `POST` | `/api/v1/scan` | Scan the added folders and catalog new files; a new series joins its folder's library, if it has one |
 | `GET` | `/api/v1/directories` | The scanned folders by path: `id`, `path` (its full path on the server) and the `library_id` their series join, or `null` |
 | `POST` | `/api/v1/directories` | Add a folder to scan from `{"path", "create_library", "library_type"?, "library_name"?}`: with `create_library`, a new library of `library_type` — required then — named `library_name` or after the folder receives its series. The stored books inside it that belong to no folder yet join it. Answers `201` and the folder; `400 directory_not_found` for a path that isn't absolute or names no folder, `409 directory_taken` for one added already, `409 directory_overlaps` for one inside or around another folder, the cover folder or the database's |
 | `DELETE` | `/api/v1/directories/{id}` | Remove a folder: its books leave the catalog, with the series left without books; its library and the files stay. `204`, or `404 not_found` |

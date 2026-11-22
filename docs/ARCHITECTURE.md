@@ -87,7 +87,7 @@
 - Every reference to another table is a declared `FOREIGN KEY` — `PRAGMA foreign_keys = ON` enforces only declared ones.
 - Times are stored as `INTEGER` unix seconds and read with `read_time` (must have a value — NULL is an error naming the column) or `read_optional_time` (NULL is `None`).
 - A column is nullable exactly when its Rust field is an `Option`.
-- The scanner finds a series by `match_key` — the title it was first found under, lowercased in Rust — never by `name`, which an admin edits.
+- The scanner finds a series by `match_key` — the title it was first found under, lowercased in Rust — among the series holding a book of the same directory; never by `name`, which an admin edits.
 - Back up SQLite with `VACUUM INTO`, never by copying the file — under WAL a plain copy is not a valid backup.
 - Schema changes: a new numbered `.sql` in `migrations/`, registered in `MIGRATIONS`; an applied migration is never edited.
 - A migration rebuilds a table — create, copy with the ids and `sqlite_sequence`'s counter, drop, rename — only while no other table references it: migrations run with foreign keys on, so dropping a referenced table fires its children's `ON DELETE`. Otherwise it adds columns with `ALTER TABLE … ADD COLUMN`.
