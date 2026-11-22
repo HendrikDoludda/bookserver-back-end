@@ -63,6 +63,7 @@ impl FromRow for BookSeriesMetadata {
     fn from_row(row: &Row) -> rusqlite::Result<Self> {
         Ok(Self {
             name: row.get("name")?,
+            match_key: row.get("match_key")?,
             description: row.get("description")?,
             cover_image: row.get("cover_image")?,
             start_release_year: row.get("start_release_year")?,

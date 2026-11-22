@@ -52,11 +52,12 @@ impl Insert for BookMetadata {
 
 impl Insert for BookSeriesMetadata {
     fn insert(&self, conn: &Connection) -> Result<i64, DatabaseError> {
-        let query = "INSERT INTO series (name, description, cover_image, \
-            start_release_year, end_release_year) VALUES (?1, ?2, ?3, ?4, ?5)";
+        let query = "INSERT INTO series (name, match_key, description, cover_image, \
+            start_release_year, end_release_year) VALUES (?1, ?2, ?3, ?4, ?5, ?6)";
 
         let params = params![
             self.name.clone(),
+            self.match_key.clone(),
             self.description.clone(),
             self.cover_image.clone(),
             self.start_release_year,
@@ -440,9 +441,10 @@ mod tests {
     #[test]
     fn series_round_trip() {
         let conn = memory_connection();
-        // What the scanner writes: only the name.
+        // What the scanner writes: only the name and its key.
         let scanned = BookSeriesMetadata {
-            name: "the long road".to_string(),
+            name: "The Long Road".to_string(),
+            match_key: "the long road".to_string(),
             description: None,
             cover_image: None,
             start_release_year: None,
@@ -450,6 +452,7 @@ mod tests {
         };
         let described = BookSeriesMetadata {
             name: "a quiet sea".to_string(),
+            match_key: "a quiet sea".to_string(),
             description: Some("Twelve volumes".to_string()),
             cover_image: Some("./cover_images/sea.jpg".to_string()),
             start_release_year: Some(1999),
@@ -460,7 +463,8 @@ mod tests {
 
         let stored =
             Database::get_entry_with_connection::<BookSeriesMetadata>(&conn, scanned_id).unwrap();
-        assert_eq!(stored.name, "the long road");
+        assert_eq!(stored.name, "The Long Road");
+        assert_eq!(stored.match_key, "the long road");
         assert_eq!(
             stored.description, None,
             "no description must not come back as an empty one"

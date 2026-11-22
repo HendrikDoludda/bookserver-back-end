@@ -28,7 +28,7 @@
 | Library & series management | 2 | completed | [01-library-and-series-management](features/01-library-and-series-management.md) |
 | Directory scanning | 2 | in progress | [34-directory-scanning](features/34-directory-scanning.md) |
 | Scannable directories | 2 | not started | [35-scannable-directories](features/35-scannable-directories.md) |
-| Covers | 2 | in progress | [36-covers](features/36-covers.md) |
+| Covers | 2 | completed | [36-covers](features/36-covers.md) |
 | File watching | 2 | not started | [37-file-watching](features/37-file-watching.md) |
 | Read state | 3 | not started | [02-read-state](features/02-read-state.md) |
 | Metadata enrichment | 3 | not started | [09-metadata-enrichment](features/09-metadata-enrichment.md) |

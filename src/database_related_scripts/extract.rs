@@ -133,7 +133,7 @@ impl Extract for BookSeriesMetadata {
     const TABLE: &'static str = "series";
     const KEY: &'static str = "id";
     const COLUMNS: &'static str =
-        "id, name, description, cover_image, start_release_year, end_release_year";
+        "id, name, match_key, description, cover_image, start_release_year, end_release_year";
 }
 
 impl Extract for LibraryMetadata {

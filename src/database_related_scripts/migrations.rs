@@ -35,6 +35,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "cover_file_names",
         sql: include_str!("../../migrations/0004_cover_file_names.sql"),
     },
+    Migration {
+        version: 5,
+        name: "series_match_key",
+        sql: include_str!("../../migrations/0005_series_match_key.sql"),
+    },
 ];
 
 // Apply every migration that has not yet been recorded in `schema_migrations`.
@@ -281,6 +286,7 @@ mod tests {
             ("library", "library_name"),
             ("library", "library_type"),
             ("series", "name"),
+            ("series", "match_key"),
         ];
         let optional = [
             ("books", "cover_image"),
@@ -880,6 +886,77 @@ mod tests {
             covers("SELECT cover_image FROM library"),
             [Some("l.gif".to_string())]
         );
+    }
+
+    #[test]
+    fn a_database_of_the_fourth_schema_gets_match_keys_and_its_scanned_series_their_capitals_back()
+    {
+        let mut conn = Connection::open_in_memory().unwrap();
+        configure(&conn).unwrap();
+        // As a server of the fourth schema left it.
+        for migration in &MIGRATIONS[..4] {
+            conn.execute_batch(migration.sql).unwrap();
+        }
+        conn.execute_batch(
+            "CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, \
+             applied_at INTEGER NOT NULL); \
+             INSERT INTO schema_migrations (version, applied_at) \
+             VALUES (1, 0), (2, 0), (3, 0), (4, 0);",
+        )
+        .unwrap();
+        let book = |title: &str, series: i64| {
+            conn.execute(
+                "INSERT INTO books (title, author, format, language, tags, file_path, series) \
+                 VALUES (?1, 'a', 'cbz', 'ja', '', ?2, ?3)",
+                params![title, format!("/books/{title} {series}.cbz"), series],
+            )
+            .unwrap();
+        };
+        // As the scanner named them: its first book's title, lowercased in Rust.
+        let berserk = insert_series(&conn, "berserk");
+        book("Berserk", berserk);
+        book("BERSERK", berserk);
+        let cafe = insert_series(&conn, "café");
+        book("Café", cafe);
+        let anger = insert_series(&conn, "ärger");
+        book("Ärger", anger);
+        // As an admin renamed one through the API, and one without books.
+        let pluto = insert_series(&conn, "Pluto");
+        book("Pluto", pluto);
+        insert_series(&conn, "empty");
+
+        run(&mut conn).unwrap();
+
+        let rows: Vec<(String, String)> = conn
+            .prepare("SELECT name, match_key FROM series ORDER BY id")
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        let expected = [
+            // The first book's capitals.
+            ("Berserk", "berserk"),
+            // lower() folds the C; the é was lowercase already.
+            ("Café", "café"),
+            // lower() can't fold Ä, so no title lowers to the name, which stays.
+            ("ärger", "ärger"),
+            // An admin's capitals stay, and the key is lowercase.
+            ("Pluto", "pluto"),
+            ("empty", "empty"),
+        ]
+        .map(|(name, key)| (name.to_string(), key.to_string()));
+        assert_eq!(rows, expected);
+
+        let index: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' \
+                 AND tbl_name = 'series' AND name = 'series_by_match_key'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(index, 1);
     }
 
     #[test]

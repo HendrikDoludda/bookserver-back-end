@@ -328,6 +328,9 @@ impl AsRef<str> for BookDatabaseColumns {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BookSeriesMetadata {
     pub name: String,
+    /// What the scanner finds the series by: the name it was first found under, lowercased. A
+    /// rename leaves it as it is.
+    pub match_key: String,
     pub description: Option<String>,
     pub cover_image: Option<String>,
     pub start_release_year: Option<i64>,

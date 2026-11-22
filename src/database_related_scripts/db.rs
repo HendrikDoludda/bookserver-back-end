@@ -580,6 +580,20 @@ impl Database {
     }
 
     /// Whether the library holds the series.
+    /// The series whose match key is `key` — the oldest, should there be several — or `None`.
+    pub fn series_by_match_key_with_connection(
+        conn: &Connection,
+        key: &str,
+    ) -> Result<Option<i64>, DatabaseError> {
+        conn.query_row(
+            "SELECT id FROM series WHERE match_key = ?1 ORDER BY id LIMIT 1",
+            [key],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(logged("reading", "series", DatabaseError::QueryFailure))
+    }
+
     pub fn library_holds_series_with_connection(
         conn: &Connection,
         library_id: i64,

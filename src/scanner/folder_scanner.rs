@@ -15,7 +15,7 @@ use crate::config;
 use crate::data_models::models::{
     BookDatabaseColumns, BookFormat, BookLanguage, BookMetadata, BookSeriesMetadata,
     ColumnSelector, DatabaseTypes, FileExtractedMetadata, LibraryDatabaseColumns, LibraryMetadata,
-    LibraryType, ParsedName, SeriesDatabaseColumns, SeriesLibraryConnection,
+    LibraryType, ParsedName, SeriesLibraryConnection,
 };
 use crate::db::Database;
 use crate::error_types::{DatabaseError, FolderScannerError};
@@ -135,13 +135,7 @@ fn create_book_entry(
     }
 
     let parsed_name = get_final_file_name(&final_path);
-    let series_id = match get_series_id(parsed_name.title.clone(), db, library_id) {
-        Ok(id) => Some(id),
-        Err(e) => {
-            warn!("Failed to get series id because of : {:?}", e);
-            None
-        }
-    };
+    let series_id = get_series_id(&parsed_name.title, db, library_id)?;
     let cover_image = cover_for(covers, &final_path, &format, file_hash.as_deref());
     let reading_direction = comic_info::reading_direction(&format, &final_path);
 
@@ -155,7 +149,7 @@ fn create_book_entry(
         language: metadata.language_code,
         page_count: metadata.page_number,
         cover_image,
-        series: series_id,
+        series: Some(series_id),
         volume_number: parsed_name.volume_number,
         chapter_number: parsed_name.chapter_number,
         page_number: parsed_name.page_number,
@@ -297,52 +291,40 @@ fn hash_file(mut file: File) -> io::Result<String> {
     Ok(hasher.finalize().to_hex().to_string())
 }
 
-fn get_series_id(
-    file_name: String,
-    db: &Database,
-    library_id: i64,
-) -> Result<i64, FolderScannerError> {
-    match db.get_id_from_table(
-        DatabaseTypes::Series,
-        ColumnSelector::Series(SeriesDatabaseColumns::Name),
-        &file_name.to_lowercase(),
-    ) {
-        Ok(Some(id)) => Ok(id), // found an existing series
-        Ok(None) | Err(_) => create_series_entry(file_name, db, library_id), // not found or DB error
-    }
-}
-
-fn create_series_entry(
-    file_name: String,
-    db: &Database,
-    library_id: i64,
-) -> Result<i64, FolderScannerError> {
-    let series_entry = BookSeriesMetadata {
-        name: file_name.to_lowercase(),
-        description: None,
-        cover_image: None,
-        start_release_year: None,
-        end_release_year: None,
-    };
-    let id = db
-        .insert(&series_entry)
-        .map_err(|_| FolderScannerError::SeriesInsertionFailed)?;
-    link_series_to_default_library(id, library_id, db)
-        .map_err(|_| FolderScannerError::SeriesInsertionFailed)?;
-    Ok(id)
-}
-
-fn link_series_to_default_library(
-    series_id: i64,
-    library_id: i64,
-    db: &Database,
-) -> Result<(), DatabaseError> {
-    let linked_series = SeriesLibraryConnection {
-        series_id,
-        library_id,
-    };
-    db.insert(&linked_series)?;
-    Ok(())
+/// The series a book titled `title` joins: the one whose match key is the title lowercased, else a
+/// new one named as found and put into the library. A database error fails the book, as a lookup
+/// that answered "none" would make a second series.
+fn get_series_id(title: &str, db: &Database, library_id: i64) -> Result<i64, FolderScannerError> {
+    // Lowercased in Rust, which knows every alphabet: "ÄRGER v02" finds "Ärger".
+    let key = title.to_lowercase();
+    db.setup_new_transaction(|conn| {
+        if let Some(id) = Database::series_by_match_key_with_connection(conn, &key)? {
+            return Ok(id);
+        }
+        let id = Database::insert_with_connection(
+            conn,
+            &BookSeriesMetadata {
+                name: title.to_string(),
+                match_key: key,
+                description: None,
+                cover_image: None,
+                start_release_year: None,
+                end_release_year: None,
+            },
+        )?;
+        Database::insert_with_connection(
+            conn,
+            &SeriesLibraryConnection {
+                series_id: id,
+                library_id,
+            },
+        )?;
+        Ok(id)
+    })
+    .map_err(|error| {
+        warn!("no series for {title:?}: {error}");
+        FolderScannerError::SeriesInsertionFailed
+    })
 }
 
 fn get_library_id(name: String, db: &Database) -> Result<i64, DatabaseError> {
@@ -458,6 +440,151 @@ mod tests {
         create_book_entry(&epub, &temp.db, library_id, &covers).unwrap();
 
         assert_eq!(stored_cover(&temp.db, &epub), None);
+    }
+
+    /// Every series as `(name, match_key)`, by id.
+    fn series_rows(db: &Database) -> Vec<(String, String)> {
+        db.setup_new_transaction(|conn| {
+            Ok(conn
+                .prepare("SELECT name, match_key FROM series ORDER BY id")
+                .unwrap()
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap())
+        })
+        .unwrap()
+    }
+
+    fn series_of(db: &Database, file_path: &Path) -> Option<i64> {
+        db.setup_new_transaction(|conn| {
+            Ok(conn
+                .query_row(
+                    "SELECT series FROM books WHERE file_path = ?1",
+                    [file_path.to_string_lossy()],
+                    |row| row.get(0),
+                )
+                .unwrap())
+        })
+        .unwrap()
+    }
+
+    fn count(db: &Database, table: &str) -> i64 {
+        db.setup_new_transaction(|conn| {
+            Ok(conn
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                    row.get(0)
+                })
+                .unwrap())
+        })
+        .unwrap()
+    }
+
+    /// Scans each of `names` as a one-page CBZ into one library; answers their paths.
+    fn scan_books(dir: &TempDir, db: &Database, names: &[&str]) -> Vec<PathBuf> {
+        let covers = covers_in(dir);
+        let library_id = create_library_entry("manga".to_string(), db).unwrap();
+        names
+            .iter()
+            .map(|name| {
+                let book = dir.write_cbz(name, &[("001.jpg", b"not a picture")]);
+                create_book_entry(&book, db, library_id, &covers).unwrap();
+                book
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_series_is_named_as_found_and_a_volume_in_other_capitals_joins_it() {
+        let dir = TempDir::new();
+        let temp = TempDatabase::open();
+
+        let books = scan_books(&dir, &temp.db, &["Berserk v01.cbz", "BERSERK v02.cbz"]);
+
+        assert_eq!(
+            series_rows(&temp.db),
+            [("Berserk".to_string(), "berserk".to_string())]
+        );
+        assert_eq!(
+            series_of(&temp.db, &books[0]),
+            series_of(&temp.db, &books[1])
+        );
+        assert_eq!(count(&temp.db, "library_elements"), 1);
+    }
+
+    #[test]
+    fn letters_beyond_ascii_match_in_any_case() {
+        let dir = TempDir::new();
+        let temp = TempDatabase::open();
+
+        let books = scan_books(&dir, &temp.db, &["Ärger v01.cbz", "ÄRGER v02.cbz"]);
+
+        assert_eq!(
+            series_rows(&temp.db),
+            [("Ärger".to_string(), "ärger".to_string())]
+        );
+        assert_eq!(
+            series_of(&temp.db, &books[0]),
+            series_of(&temp.db, &books[1])
+        );
+    }
+
+    #[test]
+    fn a_renamed_series_still_collects_new_volumes() {
+        let dir = TempDir::new();
+        let temp = TempDatabase::open();
+        let first = scan_books(&dir, &temp.db, &["Berserk v01.cbz"]);
+        let series_id = series_of(&temp.db, &first[0]).unwrap();
+        // As `PATCH /series/{id}` renames it: the name only.
+        temp.db
+            .setup_new_transaction(|conn| {
+                Database::update_multiple_values_with_connection::<BookSeriesMetadata>(
+                    conn,
+                    &[crate::models::SeriesDatabaseColumns::Name],
+                    &[&"Berserk: Deluxe Edition"],
+                    series_id,
+                )?;
+                Ok(())
+            })
+            .unwrap();
+
+        let second = scan_books(&dir, &temp.db, &["Berserk v02.cbz"]);
+
+        assert_eq!(series_of(&temp.db, &second[0]), Some(series_id));
+        assert_eq!(
+            series_rows(&temp.db),
+            [("Berserk: Deluxe Edition".to_string(), "berserk".to_string())]
+        );
+    }
+
+    #[test]
+    fn a_failing_series_lookup_stores_no_book_and_no_second_series() {
+        let dir = TempDir::new();
+        let temp = TempDatabase::open();
+        scan_books(&dir, &temp.db, &["Berserk v01.cbz"]);
+        // Without its column, every lookup answers an error.
+        temp.db
+            .setup_new_transaction(|conn| {
+                conn.execute("ALTER TABLE series RENAME COLUMN match_key TO lost", [])
+                    .unwrap();
+                Ok(())
+            })
+            .unwrap();
+        let library_id = create_library_entry("manga".to_string(), &temp.db).unwrap();
+        let second = dir.write_cbz("Berserk v02.cbz", &[("001.jpg", b"not a picture")]);
+
+        let result = create_book_entry(&second, &temp.db, library_id, &covers_in(&dir));
+
+        assert!(matches!(
+            result,
+            Err(FolderScannerError::SeriesInsertionFailed)
+        ));
+        assert_eq!(count(&temp.db, "series"), 1);
+        assert_eq!(
+            count(&temp.db, "books"),
+            1,
+            "no row, so the next scan tries the file again"
+        );
     }
 
     #[test]

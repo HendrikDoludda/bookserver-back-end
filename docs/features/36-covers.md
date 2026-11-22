@@ -1,6 +1,6 @@
 # Covers
 
-State: in progress
+State: completed
 
 The scanner extracts one cover per book into the cover folder as `<file hash>.<ext>` — the first
 page of a PDF, the first image of a CBZ or image folder, the image an EPUB's package document
