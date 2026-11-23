@@ -1001,7 +1001,8 @@ mod tests {
         }
     }
 
-    /// The books `walk` finds under `root`: each one's path relative to it, and its format.
+    /// The books `walk` finds under `root`: each one's path relative to it, its parts joined by
+    /// `/` on every system, and its format.
     fn books_under(root: &Path) -> Vec<(String, String)> {
         walk(root, root, &Heartbeat::default())
             .books
@@ -1012,8 +1013,10 @@ mod tests {
                         .path
                         .strip_prefix(root)
                         .unwrap()
-                        .to_string_lossy()
-                        .into_owned(),
+                        .iter()
+                        .map(|part| part.to_string_lossy())
+                        .collect::<Vec<_>>()
+                        .join("/"),
                     found.format.as_str().to_string(),
                 )
             })
@@ -2137,7 +2140,7 @@ mod tests {
         let id = row_id(&temp.db, &first).unwrap();
         let series = series_of(&temp.db, &first);
 
-        let renamed = dir.path().join("Old/Berserk_v01.cbz");
+        let renamed = dir.path().join("Old").join("Berserk_v01.cbz");
         fs::create_dir_all(renamed.parent().unwrap()).unwrap();
         fs::rename(&first, &renamed).unwrap();
         let report = scan_all(&temp.db, &covers);
@@ -2178,7 +2181,7 @@ mod tests {
         scan_all(&temp.db, &covers);
         let id = row_id(&temp.db, &book).unwrap();
 
-        let copy = dir.path().join("Copy/Berserk v01.cbz");
+        let copy = dir.path().join("Copy").join("Berserk v01.cbz");
         fs::create_dir_all(copy.parent().unwrap()).unwrap();
         fs::copy(&book, &copy).unwrap();
         let report = scan_all(&temp.db, &covers);

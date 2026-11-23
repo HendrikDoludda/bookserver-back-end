@@ -1176,6 +1176,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_look_at_a_root_tells_missing_empty_full_and_replaced_apart() {
         let dir = TempDir::new();
@@ -1278,6 +1279,7 @@ mod tests {
         assert_eq!(scans.status().pending, by_the_watcher(root.clone()));
     }
 
+    #[cfg(unix)]
     #[tokio::test(start_paused = true)]
     async fn a_watched_folder_replaced_between_two_looks_is_watched_anew_and_scanned() {
         let dir = TempDir::new();
@@ -1298,6 +1300,7 @@ mod tests {
         fs::remove_dir_all(&away).unwrap();
     }
 
+    #[cfg(unix)]
     #[tokio::test(start_paused = true)]
     async fn a_watched_folder_replaced_by_an_empty_one_is_gone_and_not_scanned() {
         let dir = TempDir::new();

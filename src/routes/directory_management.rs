@@ -626,6 +626,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn a_book_stored_relative_to_the_servers_folder_is_found_and_stored_canonical() {
         let temp = TempDatabase::open();
