@@ -8,5 +8,5 @@ hand-edited field.
 
 ## Build
 - [ ] 2 h · Endpoint to edit a book's metadata fields, behind `AdminSession` — library and series editing live in [01](01-library-and-series-management.md) [BE]
-- [ ] 3 h · Remember which fields were edited by hand (a per-field marker), and skip them in every later merge [DB] [BE]
+- [ ] 3 h · Remember which fields were edited by hand (a per-field marker), and skip them in every later merge and in the scan's re-parse of the file name ([34](34-directory-scanning.md)) [DB] [BE]
 - [ ] 4 h · Edit screen for any metadata field of a book or series [FE]

@@ -5,7 +5,7 @@
 |---|---|
 | `cli-alias` | `alias tailscale=/Applications/Tailscale.app/Contents/MacOS/Tailscale` |
 | `run` | `BIND_ADDRESS=127.0.0.1 cargo run` |
-| `serve` | `tailscale serve --bg 8080` |
+| `serve` | `tailscale server --bg 8080` |
 | `serve-off` | `tailscale serve --https=443 off` |
 
 ## Run

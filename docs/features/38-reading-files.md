@@ -1,6 +1,6 @@
 # Reading files
 
-State: completed
+State: in progress
 
 `GET /books/{id}/file` streams a book's file with HTTP range support through `tower-http`'s
 `ServeFile`, and `GET /books/{id}` returns its metadata (404 for an unknown id). PDF,
@@ -29,3 +29,7 @@ EPUBs page by page.
 - [x] 6 h · Fixed-layout EPUB pages as data: the book's stylesheets (with `csslib`: `tag`, `.class` and `#id` rules by specificity, the inline style last, text styles inherited, `@font-face`), and each page — read as XML — with its size, background and positioned text lines, each line with its rotation and its runs, each run with its link target [FE]
 - [x] 5 h · Fixed-layout EPUB pages on screen: the book's fonts loaded, each page drawn at its stored size and scaled to fit, its photo behind, every line placed and styled, rotated lines turned, a link turning to its page — in the page turner [FE]
 - [x] 0.5 h · Once the app reads PDFs, end the early-development practice of editing migration `0001` and wiping the database: every later schema change is a new numbered migration, and the exception line in [ARCHITECTURE.md](../ARCHITECTURE.md) goes [DB]
+- [x] 2 h · Fixed-layout lines placed by `bottom` as well as `top`: measured from the bottom of the nearest placed box around them that gives its height, else the page's, and `top` wins when both are given; a PDF-converted book places every line by `bottom`, so today all its text lands on the page's top edge [FE]
+- [x] 3 h · Fixed-layout lines transformed by `transform` — `scale()`, `rotate()`, `matrix()` and lists of them — around their `transform-origin`, CSS's centre when none is given, instead of `rotate()` alone around the top left; a PDF-converted book sets its text 4× too big and scales it to a quarter [FE]
+- [x] 3 h · A stylesheet or `style` attribute that holds a declaration csslib can't parse loses only that declaration — a selector it can't parse only its rule: the app splits rules and declarations itself and hands csslib a rule's selectors alone. Today csslib stops at the first such error and drops the rest of the file — `background-size:auto100%` loses every page picture of a book [FE]
+- [ ] ? h · A fixed-layout page's picture is drawn at its CSS size whatever width it was decoded at — with `background-size: auto` (`BoxFit.none`) it is drawn at the decoded size, so on a window whose shorter side is under ~390 points it comes out smaller than its page [FE]

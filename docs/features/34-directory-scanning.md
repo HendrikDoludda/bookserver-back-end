@@ -1,6 +1,6 @@
 # Directory scanning
 
-State: completed
+State: in progress
 
 The scanner walks the scannable directories ([35](35-scannable-directories.md)), parses volume /
 chapter / page numbers out of file names, and creates the book and series rows plus a cover for
@@ -28,3 +28,6 @@ and read a stored book's file again only when it changed.
 - [x] 0.5 h · A folder book's title comes from the folder's whole name — `file_stem` turns "Mr. Robot" into "Mr" [BE]
 - [x] 1 h · A name that leaves no title ("Chapter 12", "v01.cbz") takes its folder's name — today every such book joins one series named "" [BE]
 - [x] 0.5 h · The app reads `chapter_number` as `num?` and shows it in the catalog language's number format — its `int?` pattern rejects a whole series' book list at the first `1.5` [FE]
+- [ ] 1.5 h · A name with a volume, chapter or page marker takes only the text before its first marker as its title — `Berserk v01 The Black Swordsman` joins `Berserk`, `One Piece c001 Romance Dawn` joins `One Piece`; with nothing before the marker (`v01 Berserk`) the title stays the name without its markers [BE]
+- [ ] 1 h · A name without a marker whose last word is a whole number of 1 to 3 digits, after a title, has that number as its volume — `Picture book 2` is volume 2 of `Picture book`; a lone number (`1984`), four digits (`August 1936`) and a decimal (`Version 2.0`) stay in the title [BE]
+- [ ] 2.5 h · A scan parses a stored book's name again: one that parses differently takes its new title and numbers under the same id and moves to the series its name finds, and the series it leaves is deleted once empty — today a stored book keeps the title, numbers and series of its first scan, so a new parsing rule never reaches the books already stored [BE]
