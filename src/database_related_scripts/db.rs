@@ -1449,6 +1449,17 @@ mod tests {
     }
 
     #[test]
+    fn the_sqlite_that_runs_is_the_one_compiled_into_the_binary() {
+        assert_eq!(
+            rusqlite::version_number(),
+            rusqlite::ffi::SQLITE_VERSION_NUMBER,
+            "running SQLite {}, compiled against {}",
+            rusqlite::version(),
+            rusqlite::ffi::SQLITE_VERSION_NUMBER
+        );
+    }
+
+    #[test]
     fn a_database_in_a_folder_is_the_app_data_sqlite_in_it() {
         let folder = TempDir::new();
         std::fs::create_dir_all(folder.path()).unwrap();
