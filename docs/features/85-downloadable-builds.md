@@ -3,7 +3,7 @@
 State: in progress
 
 A zip per platform — macOS (Intel and Apple Silicon in one), Windows x64, Linux x64 — holding
-the server, PDFium, a README and the licence notices, built by GitHub Actions for each version
+the server, PDFium, a README, `LICENSE` and the licence notices, built by GitHub Actions for each version
 tag and published on this repo's Releases. The server keeps everything it writes in one data
 folder, so it runs from wherever it was unpacked. Installers, Docker and HTTPS inside the
 server stay in [52](52-packaging-and-deployment.md).
@@ -15,9 +15,10 @@ server stay in [52](52-packaging-and-deployment.md).
 - [x] 1 h · Bind PDFium from the binary's folder first, then the working directory, then the system's library path [BE]
 - [x] 0.5 h · `BIND_ADDRESS` defaults to `127.0.0.1` [BE]
 - [x] 0.5 h · SQLite compiled into the binary (`rusqlite` feature `bundled`) [BE]
+- [x] 0.5 h · MIT licence: `LICENSE` in this repo and the app's, `license = "MIT"` in `Cargo.toml`, and a License section in both READMEs [BE] [FE]
 - [ ] 2 h · Licence check and notices: `cargo about` accepts only the licences listed in `about.toml` and renders `THIRD_PARTY_LICENSES.html` [BE]
-- [ ] 1 h · `packaging/README.txt`, shipped in every download: starting the server on each OS, the setup code, the data folder and the settings, `tailscale serve`, and the terms — you may download and run this build to try it out; all other rights reserved [BE]
-- [ ] 2 h · `scripts/package.sh <platform>`: the release binary (macOS: both CPUs joined by `lipo`), PDFium `chromium/7543` (`pdfium-mac-univ.tgz`, `pdfium-win-x64.tgz`, `pdfium-linux-x64.tgz`) checked against a pinned SHA-256 — its macOS library ships unsigned, so it is ad-hoc signed —, the README, the licence notices and PDFium's own (`LICENSE` and `licenses/` in each archive), zipped [BE]
+- [ ] 1 h · `packaging/README.txt`, shipped in every download: starting the server on each OS, the setup code, the data folder and the settings, `tailscale serve`, and that the server is MIT-licensed (`LICENSE` beside it) [BE]
+- [ ] 2 h · `scripts/package.sh <platform>`: the release binary (macOS: both CPUs joined by `lipo`), PDFium `chromium/7543` (`pdfium-mac-univ.tgz`, `pdfium-win-x64.tgz`, `pdfium-linux-x64.tgz`) checked against a pinned SHA-256 — its macOS library ships unsigned, so it is ad-hoc signed —, the README, `LICENSE`, the licence notices and PDFium's own (`LICENSE` and `licenses/` in each archive), zipped [BE]
 - [ ] 3 h · `.github/workflows/release.yml`: the tests on Ubuntu, macOS and Windows, a package per platform, and for a `v*` tag that matches `Cargo.toml`'s version a draft GitHub Release with the zips [BE]
 - [ ] 1 h · Release builds of the app accept `http://` to `localhost`, `127.0.0.1` and `::1`; every other address still needs `https://` [FE]
 - [ ] 0.5 h · `run-deploy/release.md`, and a Download section in the README

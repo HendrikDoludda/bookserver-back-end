@@ -70,6 +70,7 @@
 | Release pipeline | Phase 2 | blocked | [76-release-pipeline](features/76-release-pipeline.md) |
 | Menu bar / tray app | Phase 2 | not started | [77-tray-app](features/77-tray-app.md) |
 | Modular core & media modules | Phase 2 | not started | [94-modular-core](features/94-modular-core.md) |
+| Donations | Phase 2 | not started | [95-donations](features/95-donations.md) |
 | Public-exposure hardening | optional | not started | [54-public-exposure-hardening](features/54-public-exposure-hardening.md) |
 | PIN or re-login to open sensitive items | optional | not started | [62-sensitive-pin-or-reauth](features/62-sensitive-pin-or-reauth.md) |
 | Hide sensitive items from default views | optional | not started | [67-hide-sensitive-items](features/67-hide-sensitive-items.md) |

@@ -222,7 +222,4 @@ tests against a temporary database file that is deleted afterwards.
 
 ## License
 
-Copyright © 2026 Hendrik Doludda. All rights reserved.
-
-The source is published for viewing only. No license is granted to use, copy, modify or
-distribute it.
+Copyright © 2026 Hendrik Doludda. Licensed under the [MIT License](LICENSE).
