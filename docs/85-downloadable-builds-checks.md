@@ -1,3 +1,3 @@
 # Downloadable builds — checks
 
-- [ ] The notices page reads well: in the repo folder, `cargo about generate --locked --fail about.hbs -o target/THIRD_PARTY_LICENSES.html && open target/THIRD_PARTY_LICENSES.html`. It lists the licences at the top; under "Mozilla Public License 2.0", the link `option-ext 0.2.0` opens that version's page on crates.io.
+- [ ] The download's README reads clearly to someone who has never seen the project: `open target/dist/bookserver-server-0.1.0-macos-universal/README.txt`. Say what to change.
