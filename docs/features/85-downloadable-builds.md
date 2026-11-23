@@ -18,8 +18,9 @@ server stay in [52](52-packaging-and-deployment.md).
 - [x] 0.5 h · MIT licence: `LICENSE` in this repo and the app's, `license = "MIT"` in `Cargo.toml`, and a License section in both READMEs [BE] [FE]
 - [x] 2 h · Licence check and notices: `cargo about` accepts only the licences listed in `about.toml` and renders `THIRD_PARTY_LICENSES.html` [BE]
 - [x] 1 h · `packaging/README.txt`, shipped in every download: starting the server on each OS, the setup code, the data folder and the settings, `tailscale serve`, and that the server is MIT-licensed (`LICENSE` beside it) [BE]
-- [ ] 2 h · `scripts/package.sh <platform>`: the release binary as `bookserver` (macOS: both CPUs joined by `lipo`, ad-hoc signed), PDFium `chromium/7543` (`pdfium-mac-univ.tgz`, `pdfium-win-x64.tgz`, `pdfium-linux-x64.tgz`) checked against a pinned SHA-256 — its macOS library ships unsigned, so it is ad-hoc signed —, the README, `LICENSE`, the licence notices, PDFium's own (`LICENSE` and `licenses/` from its archive) in `pdfium/`, and every shipped crate's `NOTICE` file in `notices/`, zipped (`.tar.gz` on Linux) [BE]
+- [x] 2 h · `scripts/package.sh <platform>`: the release binary as `bookserver` (macOS: both CPUs joined by `lipo`, ad-hoc signed), PDFium `chromium/7543` (`pdfium-mac-univ.tgz`, `pdfium-win-x64.tgz`, `pdfium-linux-x64.tgz`) checked against a pinned SHA-256 — its macOS library ships unsigned, so it is ad-hoc signed —, the README, `LICENSE`, the licence notices, PDFium's own (`LICENSE` and `licenses/` from its archive) in `pdfium/`, and every shipped crate's `NOTICE` file in `notices/`, zipped (`.tar.gz` on Linux) [BE]
 - [ ] 3 h · `.github/workflows/release.yml`: the tests on Ubuntu, macOS and Windows, a package per platform, and for a `v*` tag that matches `Cargo.toml`'s version a draft GitHub Release with the zips [BE]
+- [ ] 0.5 h · The tests compile on Windows: Unix-only test code under `#[cfg(unix)]`, and the watcher's non-UTF-8 case on Windows too (a lone UTF-16 surrogate) [BE]
 - [ ] 1 h · Release builds of the app accept `http://` to `localhost`, `127.0.0.1` and `::1`; every other address still needs `https://` [FE]
 - [ ] 0.5 h · `run-deploy/release.md`, and a Download section in the README
 - [ ] 0.5 h · Check by hand on your other Mac: the macOS download from the draft release starts after clearing its quarantine, logs the version, the data folder, PDFium and the setup code, gives a PDF a cover, and the phone app reaches it through `tailscale serve`
@@ -29,6 +30,5 @@ server stay in [52](52-packaging-and-deployment.md).
 - [ ] ? h · Check by hand: the Windows download on a Windows without Visual Studio (Windows Sandbox, on Windows Pro)
 
 ## Missing information
-- [ ] Do the tests pass on Windows and Linux? They have only ever run on macOS — answered by: the release workflow's first run
-- [ ] Does `aws-lc-sys` (the TLS behind `mail-send`) need NASM on the Windows runner? — answered by: the release workflow's first run
+- [ ] Do the tests pass on Windows? They have only ever run on macOS and Linux — answered by: the next release workflow run
 - [ ] Does `pdfium.dll` need the Visual C++ runtime? — answered by: the check on a Windows without Visual Studio

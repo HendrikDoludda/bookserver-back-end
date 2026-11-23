@@ -645,7 +645,7 @@ impl Debounce {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeSet, ffi::OsStr, os::unix::ffi::OsStrExt};
+    use std::collections::BTreeSet;
 
     use notify::event::{AccessKind, CreateKind, Flag, MetadataKind, RemoveKind, RenameMode};
 
@@ -825,7 +825,7 @@ mod tests {
         let roots = [PathBuf::from("/books")];
         let book = Path::new("/books/Manga/Berserk v01.cbz");
 
-        for ignored in [
+        let mut events = vec![
             event(EventKind::Access(AccessKind::Any), book),
             event(
                 EventKind::Modify(ModifyKind::Metadata(MetadataKind::Extended)),
@@ -840,8 +840,28 @@ mod tests {
             created(Path::new("/books/Manga/Berserk v02.PART")),
             created(Path::new("/booksellers/Berserk v01.cbz")),
             created(Path::new("/elsewhere/Berserk v01.cbz")),
-            created(&Path::new("/books").join(OsStr::from_bytes(b"caf\xe9.cbz"))),
-        ] {
+        ];
+        #[cfg(unix)]
+        {
+            use std::{ffi::OsStr, os::unix::ffi::OsStrExt};
+            events.push(created(
+                &Path::new("/books").join(OsStr::from_bytes(b"caf\xe9.cbz")),
+            ));
+        }
+        #[cfg(windows)]
+        {
+            use std::{ffi::OsString, os::windows::ffi::OsStringExt};
+            // A lone surrogate (0xD800) is UTF-16 that isn't text; NTFS names may hold one.
+            let name: Vec<u16> = "caf"
+                .encode_utf16()
+                .chain([0xD800])
+                .chain(".cbz".encode_utf16())
+                .collect();
+            events.push(created(
+                &Path::new("/books").join(OsString::from_wide(&name)),
+            ));
+        }
+        for ignored in events {
             assert!(folders_of(&ignored, &roots).is_empty(), "{ignored:?}");
         }
     }

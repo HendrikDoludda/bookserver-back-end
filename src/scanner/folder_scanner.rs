@@ -2505,16 +2505,16 @@ mod tests {
         own_cbz(&dir, "Manga/Berserk v01.cbz");
         own_cbz(&outside, "Saga v01.cbz");
         own_cbz(&outside, "Sub/Saga v02.cbz");
-        std::os::unix::fs::symlink(outside.path(), root.join("Link")).unwrap();
+        #[cfg_attr(not(unix), allow(unused_mut))]
+        let mut folders = vec![root.join("Gone"), root.join("manga"), canonical(&outside)];
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(outside.path(), root.join("Link")).unwrap();
+            folders.extend([root.join("Link"), root.join("Link/Sub")]);
+        }
         scan_all(&temp.db, &covers);
 
-        for folder in [
-            root.join("Gone"),
-            root.join("Link"),
-            root.join("Link/Sub"),
-            root.join("manga"),
-            canonical(&outside),
-        ] {
+        for folder in folders {
             let report = scan_folder(&temp.db, &covers, &folder);
             assert_eq!(report, ScanReport::default(), "{folder:?}");
         }

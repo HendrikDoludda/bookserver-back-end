@@ -520,6 +520,7 @@ mod tests {
             .await
             .unwrap();
 
+        #[cfg_attr(not(unix), allow(unused_mut))]
         let mut spellings = vec![
             dir.path().join("Manga/"),
             dir.path().join("Comics/../Manga"),
