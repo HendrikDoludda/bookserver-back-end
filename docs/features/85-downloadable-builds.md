@@ -24,6 +24,7 @@ server stay in [52](52-packaging-and-deployment.md).
 - [ ] 0.5 h · `run-deploy/release.md`, and a Download section in the README
 - [ ] 0.5 h · Check by hand on your other Mac: the macOS download from the draft release starts after clearing its quarantine, logs the version, the data folder, PDFium and the setup code, gives a PDF a cover, and the phone app reaches it through `tailscale serve`
 - [ ] 0.5 h · Check by hand on your Windows PC: the Windows download starts without a firewall prompt, keeps its data in `%LOCALAPPDATA%\hendrikdoludda\bookserver\data` and gives a PDF a cover
+- [ ] ? h · Check by hand: someone who knows the project only roughly sets up a download from the draft release with nothing but its `README.txt`
 - [ ] ? h · Check by hand: the Linux download on a Linux desktop
 - [ ] ? h · Check by hand: the Windows download on a Windows without Visual Studio (Windows Sandbox, on Windows Pro)
 

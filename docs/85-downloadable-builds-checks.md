@@ -1,3 +1,6 @@
 # Downloadable builds — checks
 
-- [ ] The download's README reads clearly to someone who has never seen the project: `open target/dist/bookserver-server-0.1.0-macos-universal/README.txt`. Say what to change.
+Push first: the workflow runs on GitHub's copy of the repo. The first run takes about half an hour.
+
+- [ ] The manual run builds everything: on the repo's GitHub page, Actions → Release → Run workflow, branch `master`. All six jobs turn green — `test` on Ubuntu, macOS and Windows, `package` for macos-universal, windows-x64 and linux-x64 — and `release` is skipped. For a red job, open it, and paste the last lines of its failing step into the chat.
+- [ ] The finished run's page lists three artifacts at the bottom: `package-macos-universal`, `package-windows-x64` and `package-linux-x64`.
