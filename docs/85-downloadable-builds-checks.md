@@ -1,4 +1,3 @@
 # Downloadable builds — checks
 
-- [ ] After you push the server repo, its GitHub page shows "MIT license" in the About box on the right.
-- [ ] After you push the app repo (bookserver-front-end), its GitHub page shows "MIT license" the same way.
+- [ ] The notices page reads well: in the repo folder, `cargo about generate --locked --fail about.hbs -o target/THIRD_PARTY_LICENSES.html && open target/THIRD_PARTY_LICENSES.html`. It lists the licences at the top; under "Mozilla Public License 2.0", the link `option-ext 0.2.0` opens that version's page on crates.io.

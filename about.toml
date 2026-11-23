@@ -1,0 +1,31 @@
+accepted = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "BSL-1.0",
+    "CC0-1.0",
+    "bzip2-1.0.6",
+    # Only for option-ext (via `directories`); about.hbs links each crate's exact source, which
+    # is the one thing MPL asks of a binary.
+    "MPL-2.0",
+]
+
+# The platforms the downloads are built for; crates used only elsewhere never ship.
+targets = [
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+    "x86_64-unknown-linux-gnu",
+]
+
+# They run while compiling and aren't part of the binary.
+ignore-build-dependencies = true
+ignore-dev-dependencies = true
+
+# The server itself (`publish = false`) is not third-party; its own LICENSE ships beside the notices.
+private = { ignore = true }
