@@ -40,7 +40,7 @@ const HASH_CHUNK: usize = 256 * 1024;
 // A keyword and its number may be joined by nothing, a space, `.` or `-`: `v01`, `vol 3`, `vol.3`,
 // `v-3`.
 static VOLUME_REGEX: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?i)\b(?:v|vol|volume)[ .-]?(\d+)\b").unwrap());
+    Lazy::new(|| Regex::new(r"(?i)\b(?:v|vol|volume|book)[ .-]?(\d+)\b").unwrap());
 
 // A chapter may be a decimal one: `c01.5` lies between chapters 1 and 2.
 static CHAPTER_REGEX: Lazy<Regex> =
@@ -48,6 +48,9 @@ static CHAPTER_REGEX: Lazy<Regex> =
 
 static PAGE_REGEX: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?i)\b(?:p|pa|page)[ .-]?(\d+)\b").unwrap());
+
+// Up to three digits: a fourth makes it a year — `Radio-Craft August 1936` — not a volume.
+static TRAILING_NUMBER_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"\s(\d{1,3})\s*$").unwrap());
 
 // Tags in brackets — `[Group]`, `(Digital)`, `{HQ}` — say who made a file, not what it is.
 static TAG_REGEX: Lazy<Regex> =
@@ -96,7 +99,7 @@ pub fn scan(
                 }
                 heartbeat.at(&book.path);
                 let stored = store(db, covers, directory_id, book, &context, heartbeat);
-                if let Ok(Stored::Moved(Some(series))) = stored {
+                if let Ok(Stored::Moved(Some(series)) | Stored::Updated(Some(series))) = stored {
                     left.insert(series);
                 }
                 stored
@@ -460,8 +463,9 @@ fn book_format(path: &Path) -> Option<BookFormat> {
 enum Stored {
     /// Stored as a new book.
     Added,
-    /// Read again: its file changed, or a cover came at last.
-    Updated,
+    /// Read again — its file changed, or a cover came at last — or its name parses differently
+    /// now; with the series it left, if it left one.
+    Updated(Option<i64>),
     /// Left as it was, or only its fingerprint renewed.
     Unchanged,
     /// A row whose file this scan lost took it over; with the series that row left, if it left one.
@@ -491,7 +495,7 @@ fn record(
         });
         match outcome {
             Ok(Stored::Added) => report.added += 1,
-            Ok(Stored::Updated) => report.updated += 1,
+            Ok(Stored::Updated(_)) => report.updated += 1,
             Ok(Stored::Unchanged) => report.unchanged += 1,
             Ok(Stored::Moved(_)) => report.moved += 1,
             Err(problem) => report.failures.push(failure(&found.path, problem)),
@@ -521,7 +525,15 @@ fn store(
         )
         .map_err(|_| ScanProblem::StoreFailed)?;
     match stored {
-        Some(stored) => refresh(db, covers, found, stored, fingerprint, heartbeat),
+        Some(stored) => refresh(
+            db,
+            covers,
+            directory_id,
+            found,
+            stored,
+            fingerprint,
+            heartbeat,
+        ),
         None => add(
             db,
             covers,
@@ -696,10 +708,13 @@ fn take_over(
 
 /// Brings the stored book up to date with its file: one whose fingerprint is unchanged isn't read,
 /// one only touched takes its new fingerprint and time, and one changed its new contents — under
-/// the same id, in the same series. A book without a cover tries again for one.
+/// the same id. A book without a cover tries again for one. A name that parses differently than
+/// when it was stored — the rules changed since — gives the book its new title and numbers, in the
+/// series of `directory_id` that title finds.
 fn refresh(
     db: &Database,
     covers: &Covers,
+    directory_id: i64,
     found: &Found,
     stored: WithId<BookMetadata>,
     fingerprint: Option<String>,
@@ -744,12 +759,34 @@ fn refresh(
             changes.set(BookDatabaseColumns::CoverImage, Some(cover));
         }
     }
+    let parsed = found.parsed_name();
+    let reparsed = parsed.title != book.title
+        || parsed.volume_number != book.volume_number
+        || parsed.chapter_number != book.chapter_number
+        || parsed.page_number != book.page_number;
+    if reparsed {
+        updated = true;
+        changes.set(BookDatabaseColumns::Title, parsed.title.clone());
+        changes.set(BookDatabaseColumns::VolumeNumber, parsed.volume_number);
+        changes.set(BookDatabaseColumns::ChapterNumber, parsed.chapter_number);
+        changes.set(BookDatabaseColumns::PageNumber, parsed.page_number);
+    }
+    let mut left = None;
     if !changes.columns.is_empty() {
-        transaction(db, heartbeat, |conn| Ok(changes.apply(conn, stored.id)?))
-            .map_err(|_| ScanProblem::StoreFailed)?;
+        left = transaction(db, heartbeat, |conn| {
+            let mut left = None;
+            if reparsed {
+                let series = series_for(conn, &parsed.title, directory_id)?;
+                changes.set(BookDatabaseColumns::Series, series);
+                left = book.series.filter(|old| *old != series);
+            }
+            changes.apply(conn, stored.id)?;
+            Ok(left)
+        })
+        .map_err(|_| ScanProblem::StoreFailed)?;
     }
     Ok(if updated {
-        Stored::Updated
+        Stored::Updated(left)
     } else {
         Stored::Unchanged
     })
@@ -922,7 +959,9 @@ fn series_for(conn: &Connection, title: &str, directory_id: i64) -> Result<i64, 
 }
 
 /// Splits a name like `[Group] My_Series v02 c13.5` into a clean title plus the volume / chapter /
-/// page numbers found in it; bracketed tags leave the title.
+/// page numbers found in it; bracketed tags leave the title. The title ends at the first marker —
+/// in `Berserk v01 The Black Swordsman` what follows names the volume, not the series. A name
+/// without one may end in its volume's bare number: `Picture book 2`.
 fn parse_name(name: &str) -> ParsedName {
     // `\b` counts `_` as a letter: as a space, it lets `Berserk_v01` show its volume.
     let name = TAG_REGEX.replace_all(name, " ").replace('_', " ");
@@ -932,21 +971,33 @@ fn parse_name(name: &str) -> ParsedName {
             .and_then(|captures| captures.get(1))
             .map(|number| number.as_str().to_string())
     };
-    let volume = number(&VOLUME_REGEX).and_then(|number| number.parse().ok());
+    let mut volume = number(&VOLUME_REGEX).and_then(|number| number.parse().ok());
     let chapter = number(&CHAPTER_REGEX).and_then(|number| number.parse().ok());
     let page = number(&PAGE_REGEX).and_then(|number| number.parse().ok());
 
-    let cleaned = PAGE_REGEX
-        .replace_all(
+    let first_marker = [&*VOLUME_REGEX, &*CHAPTER_REGEX, &*PAGE_REGEX]
+        .into_iter()
+        .filter_map(|regex| regex.find(&name))
+        .map(|marker| marker.start())
+        .min();
+    let mut title = first_marker
+        .map(|start| clean_title(&name[..start]))
+        .unwrap_or_default();
+    if title.is_empty() {
+        title = clean_title(&PAGE_REGEX.replace_all(
             &CHAPTER_REGEX.replace_all(&VOLUME_REGEX.replace_all(&name, ""), ""),
             "",
-        )
-        .into_owned();
-    let title = cleaned
-        .replace('-', " ")
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
+        ));
+    }
+    if first_marker.is_none() {
+        if let Some(captures) = TRAILING_NUMBER_REGEX.captures(&name) {
+            let before = clean_title(&name[..captures.get(0).map_or(0, |all| all.start())]);
+            if !before.is_empty() {
+                volume = captures[1].parse().ok();
+                title = before;
+            }
+        }
+    }
 
     ParsedName {
         title,
@@ -954,6 +1005,14 @@ fn parse_name(name: &str) -> ParsedName {
         chapter_number: chapter,
         page_number: page,
     }
+}
+
+/// `text` with `-` as a space and every run of white space one space, trimmed.
+fn clean_title(text: &str) -> String {
+    text.replace('-', " ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 #[cfg(test)]
@@ -1855,7 +1914,7 @@ mod tests {
         dir.write_cbz("Berserk v01.cbz", &[("001.png", &page)]);
         let again = store(&temp.db, &covers, directory, &found(&cbz));
 
-        assert_eq!(again, Ok(Stored::Updated));
+        assert_eq!(again, Ok(Stored::Updated(None)));
         let (id_after, hash_after, _, _) = stored_row(&temp.db, &cbz);
         assert_eq!(id_after, id);
         assert_ne!(hash_after, hash);
@@ -1883,7 +1942,7 @@ mod tests {
         dir.write("Pluto/2.png", &second);
         let again = store(&temp.db, &covers, directory, &folder(&pluto));
 
-        assert_eq!(again, Ok(Stored::Updated));
+        assert_eq!(again, Ok(Stored::Updated(None)));
         let (id_after, hash_after, _, _) = stored_row(&temp.db, &pluto);
         assert_eq!(id_after, id);
         let mut both = blake3::Hasher::new();
@@ -1949,7 +2008,7 @@ mod tests {
         fs::write(covers.path_of(&format!("{hash}.png")), png(2, 3)).unwrap();
         let again = store(&temp.db, &covers, directory, &found(&cbz));
 
-        assert_eq!(again, Ok(Stored::Updated));
+        assert_eq!(again, Ok(Stored::Updated(None)));
         assert_eq!(stored_cover(&temp.db, &cbz), Some(format!("{hash}.png")));
     }
 
@@ -2008,6 +2067,63 @@ mod tests {
             ),
             ("Mr. Robot", "Mr. Robot", None, None, None),
             ("Chapter 12", "", None, Some(12.0), None),
+            // `Book` marks a volume too, as long as a number follows it.
+            ("Harry Potter Book 3", "Harry Potter", Some(3), None, None),
+            ("Harry Potter book.3", "Harry Potter", Some(3), None, None),
+            ("Harry Potter Book3", "Harry Potter", Some(3), None, None),
+            ("The Book Thief", "The Book Thief", None, None, None),
+            ("Notebook 3", "Notebook", Some(3), None, None),
+            ("Picture book 2", "Picture", Some(2), None, None),
+            // The title ends at the first marker.
+            (
+                "Berserk v01 The Black Swordsman",
+                "Berserk",
+                Some(1),
+                None,
+                None,
+            ),
+            (
+                "Harry Potter Book 3 The Prisoner of Azkaban",
+                "Harry Potter",
+                Some(3),
+                None,
+                None,
+            ),
+            (
+                "One Piece c001 Romance Dawn",
+                "One Piece",
+                None,
+                Some(1.0),
+                None,
+            ),
+            ("Berserk - v01 - Guts", "Berserk", Some(1), None, None),
+            ("Berserk p4 cover", "Berserk", None, None, Some(4)),
+            ("v01 Berserk", "Berserk", Some(1), None, None),
+            // Without a marker, a bare number of up to three digits at the end is the volume.
+            ("Picture Book 2", "Picture", Some(2), None, None),
+            ("Picture album 2", "Picture album", Some(2), None, None),
+            ("Berserk 001", "Berserk", Some(1), None, None),
+            ("Berserk - 01", "Berserk", Some(1), None, None),
+            (
+                "Vinland Saga 07 (Digital)",
+                "Vinland Saga",
+                Some(7),
+                None,
+                None,
+            ),
+            ("Catch 22", "Catch", Some(22), None, None),
+            (
+                "Radio-Craft August 1936",
+                "Radio Craft August 1936",
+                None,
+                None,
+                None,
+            ),
+            ("1984", "1984", None, None, None),
+            ("[Group] 12", "12", None, None, None),
+            ("Version 2.0", "Version 2.0", None, None, None),
+            ("COVID-19", "COVID 19", None, None, None),
+            ("Berserk v01 extra 3", "Berserk", Some(1), None, None),
         ] {
             let parsed = parse_name(name);
             assert_eq!(
@@ -2036,6 +2152,7 @@ mod tests {
         let file = parsed("/books/Berserk/Chapter 12.cbz", BookFormat::Cbz);
         let nested = parsed("/books/Berserk/Vol 1/c013.cbz", BookFormat::Cbz);
         let pages = parsed("/books/Dune/v01", BookFormat::ImageComic);
+        let numbered = parsed("/books/Berserk 2/c013.cbz", BookFormat::Cbz);
 
         assert_eq!(
             (file.title.as_str(), file.chapter_number),
@@ -2049,6 +2166,11 @@ mod tests {
         assert_eq!(
             (pages.title.as_str(), pages.volume_number),
             ("Dune", Some(1))
+        );
+        assert_eq!(
+            (numbered.title.as_str(), numbered.chapter_number),
+            ("Berserk", Some(13.0)),
+            "a folder's own number leaves its title"
         );
     }
 
@@ -2089,6 +2211,20 @@ mod tests {
                     |row| row.get(0),
                 )
                 .optional()
+                .unwrap())
+        })
+        .unwrap()
+    }
+
+    /// The title and volume stored for the book at `file_path`.
+    fn title_and_volume(db: &Database, file_path: &Path) -> (String, Option<i64>) {
+        db.setup_new_transaction(|conn| {
+            Ok(conn
+                .query_row(
+                    "SELECT title, volume_number FROM books WHERE file_path = ?1",
+                    [file_path.to_string_lossy()],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
                 .unwrap())
         })
         .unwrap()
@@ -2149,6 +2285,95 @@ mod tests {
         assert_eq!(row_id(&temp.db, &renamed), Some(id), "the same row");
         assert_eq!(series_of(&temp.db, &renamed), series);
         assert_eq!(count(&temp.db, "books"), 2);
+    }
+
+    #[test]
+    fn a_book_stored_under_older_name_rules_moves_to_the_series_its_name_finds_now() {
+        let dir = TempDir::new();
+        let cover_folder = TempDir::new();
+        let covers = covers_in(&cover_folder);
+        let temp = TempDatabase::open();
+        add_directory(&temp.db, dir.path(), None);
+        let v01 = own_cbz(&dir, "Berserk v01 The Black Swordsman.cbz");
+        let v02 = own_cbz(&dir, "Berserk v02 The Golden Age.cbz");
+        let v03 = own_cbz(&dir, "Berserk v03 Conviction.cbz");
+        let other = own_cbz(&dir, "Berserk The Golden Age.cbz");
+        let books = [&v01, &v02, &v03, &other];
+        scan_all(&temp.db, &covers);
+        let ids = books.map(|book| row_id(&temp.db, book));
+        // As the rules before a marker ended the title stored them: v02 in the series of the
+        // book titled like it, v03 in one of its own.
+        sql(
+            &temp.db,
+            "UPDATE books SET title = 'Berserk The Golden Age', series = \
+             (SELECT id FROM series WHERE match_key = 'berserk the golden age') \
+             WHERE file_path LIKE '%v02%'",
+        );
+        sql(
+            &temp.db,
+            "INSERT INTO series (name, match_key) VALUES ('Berserk Conviction', 'berserk conviction')",
+        );
+        sql(
+            &temp.db,
+            "UPDATE books SET title = 'Berserk Conviction', series = \
+             (SELECT id FROM series WHERE match_key = 'berserk conviction') \
+             WHERE file_path LIKE '%v03%'",
+        );
+        // An admin's new name keeps the series' match key.
+        sql(
+            &temp.db,
+            "UPDATE series SET name = 'Berserk (Deluxe)' WHERE match_key = 'berserk'",
+        );
+
+        let report = scan_all(&temp.db, &covers);
+
+        assert_eq!((report.updated, report.unchanged), (2, 2));
+        assert_eq!(
+            books.map(|book| row_id(&temp.db, book)),
+            ids,
+            "the same rows"
+        );
+        assert_eq!(
+            title_and_volume(&temp.db, &v03),
+            ("Berserk".to_string(), Some(3))
+        );
+        let berserk = series_of(&temp.db, &v01);
+        assert_eq!(series_of(&temp.db, &v02), berserk);
+        assert_eq!(series_of(&temp.db, &v03), berserk);
+        assert_ne!(series_of(&temp.db, &other), berserk);
+        assert_eq!(
+            series_rows(&temp.db).into_iter().collect::<BTreeSet<_>>(),
+            BTreeSet::from([
+                ("Berserk (Deluxe)".to_string(), "berserk".to_string()),
+                (
+                    "Berserk The Golden Age".to_string(),
+                    "berserk the golden age".to_string()
+                ),
+            ]),
+            "the series v03 emptied is gone, the one still holding a book stays"
+        );
+    }
+
+    #[test]
+    fn a_book_whose_name_parses_as_it_was_stored_is_left_as_it_is() {
+        let dir = TempDir::new();
+        let covers = covers_in(&dir);
+        let temp = TempDatabase::open();
+        let directory = add_directory(&temp.db, dir.path(), None);
+        // A decimal chapter, a whole one SQLite stores as an integer, a page and a bare volume.
+        for name in [
+            "One Piece c01.5.cbz",
+            "One Piece c12.cbz",
+            "Berserk v01 p4.cbz",
+            "Picture album 2.cbz",
+        ] {
+            let book = dir.write_cbz(name, &[("001.jpg", b"not a picture")]);
+            store(&temp.db, &covers, directory, &found(&book)).unwrap();
+
+            let again = store(&temp.db, &covers, directory, &found(&book));
+
+            assert_eq!(again, Ok(Stored::Unchanged), "{name}");
+        }
     }
 
     #[test]

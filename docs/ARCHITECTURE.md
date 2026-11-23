@@ -98,6 +98,7 @@
 - The scan reads a book's file outside any transaction, then stores its series, library link and row in one `IMMEDIATE` transaction of their own — never one per scan, which would hold the write lock for its whole length.
 - No file-system call runs inside a transaction, or while a pooled connection is held: on a share that stopped answering it would keep that connection for good.
 - A scan opens a stored book's file only when its `fingerprint` changed — a file's size and nanosecond time, an image folder's digest of its pages' — or when it still lacks a cover; a changed file renews its row under the same id and series.
+- A scan parses every stored book's name again: one that parses differently than it was stored takes its new title and numbers under the same id, and the series its name finds; the series it leaves goes once empty.
 - A scan reads folders — an added directory's root, or a folder inside one — each with everything it holds; a folder that is gone, lies behind a symlink or is spelled in another case than on disk is left out.
 - A scan reconciles after its inserts: a new file first takes over the row with its hash that the scan lost, then the rows whose files no walk met are deleted — never in a directory whose root is missing or unreadable, or holds no book when read whole, nor under a folder the walk couldn't read — and the series they leave without books.
 - Back up SQLite with `VACUUM INTO`, never by copying the file — under WAL a plain copy is not a valid backup.
