@@ -87,6 +87,12 @@ A few design choices worth calling out:
   `IN (…)` query. Results are returned as `WithId<T>` so the client gets each row's id
   alongside its metadata.
 
+## Download
+
+Each version has a ready-to-run server for macOS (Intel and Apple Silicon), Windows and Linux
+(x64) on the [Releases](https://github.com/HendrikDoludda/bookserver-back-end/releases) page —
+no Rust needed, PDFium included. Every download carries a `README.txt` on starting it.
+
 ## Getting started
 
 **Prerequisites**
