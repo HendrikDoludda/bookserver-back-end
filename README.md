@@ -1,230 +1,101 @@
 # Bookserver Backend
 
-A self-hosted backend for a personal book, manga and comic library, written in Rust. It scans
-your folders, catalogs the files in SQLite, extracts cover images, and serves everything over
-an HTTP API for a reader frontend.
+A self-hosted server for your own book, manga and comic library, written in Rust. It scans your
+folders, catalogs the files in SQLite, extracts their covers and serves everything over an HTTP
+API to the [bookserver app](https://github.com/HendrikDoludda/bookserver-front-end).
 
-> **Status: work in progress.** Scanning, cataloging, cover extraction and file streaming
-> work. Accounts work end to end — sign-up with email verification, login with optional TOTP
-> two-factor auth and recovery codes, refresh, logout and password reset — and the library
-> routes need a login. See [docs/project-state.md](docs/project-state.md) for
-> what works today and the [build checklist](docs/build-checklist.md) for what comes next.
+Not released yet: [what works today](docs/project-state.md) ·
+[what comes next](docs/build-checklist.md).
 
-## Highlights
+## Quick start
 
-- **Directory scanner.** Walks the configured folders, processes each file on Tokio's
-  blocking thread pool (with a semaphore limiting concurrency), and parses volume / chapter /
-  page numbers out of filenames.
-- **Cover extraction per format.** PDF (rendered with PDFium), CBZ (first image in the
-  archive), EPUB (the image its package document names), and plain folders of images. Each
-  cover is named by the file's BLAKE3 content hash.
-- **File streaming with HTTP range requests**, so a reader can seek inside large files
-  without downloading them whole.
-- **SQLite behind a connection pool**, with versioned, transactional migrations embedded in
-  the binary at compile time.
-- **Authentication (in progress).** Argon2id password hashing, email verification over
-  SMTP, and opaque random session tokens that are stored only as BLAKE3 hashes, with a
-  15-minute session token and a rotating 30-day refresh token. Optional TOTP two-factor
-  login: secrets encrypted at rest with XChaCha20-Poly1305, single-use recovery codes, replay
-  protection, and a lock on wrong codes that doubles up to 24 hours.
-
-## Tech stack
-
-Rust · [Axum](https://github.com/tokio-rs/axum) 0.8 · Tokio · rusqlite + r2d2 · thiserror /
-anyhow · argon2 · blake3 · pdfium-render · zip · image · mail-send · tracing
-
-## Architecture
-
-```
-src/
-├── main.rs                     entry point: logging, database, server
-├── config.rs                   env-var config + generated secrets file
-├── app_state.rs                router state: database, mailer, setup code, TOTP cipher
-├── routes/
-│   ├── api_routes.rs           route table (/health, /api/v1/…)
-│   ├── api_caller/             request handlers per area + auth extractors
-│   ├── auth.rs                 account, password and session building blocks
-│   ├── registration.rs         sign-up and email verification
-│   ├── login.rs                login, refresh and logout
-│   ├── password_reset.rs       password reset by emailed code
-│   ├── email_codes.rs          emailed codes: issuing, mail limits, checking
-│   ├── totp_management.rs      TOTP two-factor auth and recovery codes
-│   ├── totp_cipher.rs          TOTP secrets encrypted at rest (XChaCha20-Poly1305)
-│   ├── translations.rs         the translation catalog as the apps read it
-│   └── email_helper.rs         Mailer: SMTP delivery
-├── database_related_scripts/
-│   ├── db.rs                   Database: connection pool + queries
-│   ├── extract.rs, insert.rs,
-│   │   db_update.rs, db_search.rs,
-│   │   db_delete.rs            one trait per database operation
-│   ├── db_from_row.rs          row → model mapping
-│   ├── migrations.rs           versioned migration runner
-│   └── translation_seed.rs     checks the shipped translations, syncs them at start
-├── data_models/                domain models, request/response bodies
-├── scanner/                    folder scanner + cover extraction
-├── stream_reader.rs            range-request file streaming
-└── error_types.rs              typed error enums, one per domain
-migrations/                     SQL migrations (embedded at compile time)
-translations/                   UI and mail texts, one folder per language (embedded at compile time)
-assets/                         the fallback cover (embedded at compile time)
-docs/                           one design doc per feature
-```
-
-A few design choices worth calling out:
-
-- **One trait per database operation** (`Extract`, `Insert`, `Update`, `Search`, `Delete`).
-  Each model declares its table and columns, and the trait's default methods build the
-  queries. Supporting a new model takes a few lines rather than a new query layer.
-- **Transactions as closures.** Every `Database` method has a `*_with_connection` twin, so
-  a handler can compose several operations inside
-  `db.setup_new_transaction(|conn| { … })`, which commits on `Ok` and rolls back on `Err`.
-- **SQL safety.** Values are always bound parameters. Table and column names come only from
-  trusted enums and constants, never from request input.
-- **Typed errors.** Each domain has its own `thiserror` enum. Database errors map to HTTP
-  status codes: 404 for a missing row, and 500 with the detail logged server-side while the
-  client gets a generic message.
-- **No N+1 queries.** List endpoints fetch the ids first, then load every row in a single
-  `IN (…)` query. Results are returned as `WithId<T>` so the client gets each row's id
-  alongside its metadata.
-
-## Download
+### Download
 
 Each version has a ready-to-run server for macOS (Intel and Apple Silicon), Windows and Linux
 (x64) on the [Releases](https://github.com/HendrikDoludda/bookserver-back-end/releases) page —
-no Rust needed, PDFium included. Every download carries a `README.txt` on starting it.
+no Rust needed, PDFium included. The `README.txt` in each download says how to start it on your
+system.
 
-## Getting started
+### From source
 
-**Prerequisites**
-
-- A recent stable Rust toolchain (developed on Rust 1.96).
-- For PDF covers only: the PDFium shared library (`libpdfium.dylib`, `libpdfium.so` or
-  `pdfium.dll`) in the working directory or on the system library path; without it, PDFs are
-  listed without covers. Prebuilt binaries are available from
-  [bblanchon/pdfium-binaries](https://github.com/bblanchon/pdfium-binaries).
-
-**Run**
+Needs Rust 1.96 or newer. PDF covers also need the PDFium library, as step 1 of
+[local.md](docs/run-deploy/local.md#run) describes; without it, PDFs are listed without covers.
 
 ```sh
 git clone https://github.com/HendrikDoludda/bookserver-back-end.git
 cd bookserver-back-end
 cargo run
-
-curl http://localhost:8080/health                              # → pong
-curl -X POST -H "Authorization: Bearer <session_token>" -H 'Content-Type: application/json' \
-  -d '{"path":"/path/to/books","create_library":true,"library_type":"books"}' \
-  http://localhost:8080/api/v1/directories                     # → scans it, then watches it
-curl -H "Authorization: Bearer <session_token>" http://localhost:8080/api/v1/scan/status
 ```
 
-Everything the server writes — its SQLite database, the extracted covers and the generated
-`secrets.toml` — lies in one data folder, which the start log names (on macOS
-`~/Library/Application Support/com.hendrikdoludda.bookserver/`). While no account exists, the server logs a
-setup code at start; the first sign-up must send it and becomes the admin account. Its answer
-carries the `session_token` that adding a folder and scanning need (valid 15 minutes; log in
-again for a new one).
+### First steps
 
-**Configuration** (environment variables)
+1. Open http://localhost:8080/health — it answers `pong`.
+2. Copy the setup code from the server's start log; it is there while no account exists.
+3. Sign up with that code in the [bookserver app](https://github.com/HendrikDoludda/bookserver-front-end),
+   connected to `http://localhost:8080`. The first account becomes the admin.
+4. Add your book folders in the app. Each one is scanned at once, and later changes are picked
+   up as they happen.
 
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `DATA_DIR` | the OS's data folder | The folder for the database, the covers and `secrets.toml`; made if missing |
-| `PORT` | `8080` | The port to listen on, 1–65535 |
-| `BIND_ADDRESS` | `127.0.0.1` | The IP address to listen on — this computer only by default, which `tailscale serve` forwards to; `0.0.0.0` for every network |
-| `SMTP_HOST` | unset | Mail server for verification and password-reset codes; email is off while unset |
-| `SMTP_PORT`, `SMTP_FROM`, `SMTP_FROM_NAME` | unset | Required once `SMTP_HOST` is set |
-| `SMTP_USERNAME`, `SMTP_PASSWORD` | unset | The mail server's login, set together; leave both out for a server without one |
-| `SMTP_TLS` | `starttls` | `starttls`, `implicit` (usually port 465) or `none` (a local catcher such as Mailpit only; refused together with a password) |
+Port, network address and mail: [local.md](docs/run-deploy/local.md). Phones and other devices:
+[tailscale.md](docs/run-deploy/tailscale.md).
 
-A bad or incomplete setting stops the server at start, naming it.
+### Talking to the API
 
-## API
-
-Every endpoint except `/health`, `/api/v1/auth/…` and the two `/api/v1/locales…` reads needs
-`Authorization: Bearer <session_token>` and answers 401 without it; scanning, the scanned folders, `GET /api/v1/series` and every change to a
-library or a series also need an admin (403 for a member). Implemented endpoints:
-
-| Method | Path | Description |
-| --- | --- | --- |
-| `GET` | `/health` | Liveness check |
-| `GET` | `/api/v1/libraries` | All libraries |
-| `GET` | `/api/v1/libraries/{id}/series` | Series in a library |
-| `POST` | `/api/v1/libraries` | Create a library from `{"name", "library_type", "description"?}` — the type is `books`, `comics`, `magazines`, `documents` or `others`, the name is trimmed and 1–200 characters (`400 invalid_name`); answers `201` and the library |
-| `PATCH` | `/api/v1/libraries/{id}` | Change a library's `name`, `library_type` or `description`; a field left out stays, `"description": null` clears it; answers the library |
-| `PUT` | `/api/v1/libraries/{id}/series/{series_id}` | Put a series into a library; `204`, also when it was there already |
-| `DELETE` | `/api/v1/libraries/{id}/series/{series_id}` | Take a series out of a library — the series and its books stay; `204` |
-| `PUT` | `/api/v1/libraries/{id}/cover` | Show the cover that a series of the library shows now — its own or its automatic one — from `{"series_id"}`; `204`, or `400 invalid_request` for a series the library doesn't hold or one without a cover |
-| `DELETE` | `/api/v1/libraries/{id}/cover` | Back to the automatic cover, its first series' by name; `204` |
-| `GET` | `/api/v1/series` | Every series by name, with its `book_count` and the `library_ids` it is in |
-| `PATCH` | `/api/v1/series/{id}` | Change a series' `name`, `description`, `start_release_year` or `end_release_year`; a field left out stays, `null` clears it. Years are 1–9999, the first not after the last (`400 invalid_release_years`); answers the series |
-| `DELETE` | `/api/v1/series/{id}` | Delete a series without books, with its library links and reading modes — `204`, or `409 series_not_empty` while it has books |
-| `GET` | `/api/v1/series/{id}/books` | Books in a series, in reading order; a `chapter_number` may be a decimal one, such as `1.5`, and a whole one comes as an integer |
-| `PUT` | `/api/v1/series/{id}/cover` | Show the cover of one of the series' books, from `{"book_id"}`; `204`, or `400 invalid_request` for a book of another series or one without a cover |
-| `DELETE` | `/api/v1/series/{id}/cover` | Back to the automatic cover, its first book's in reading order; `204` |
-| `GET` | `/api/v1/books/{id}` | One book's metadata |
-| `GET` | `/api/v1/books/{id}/file` | Stream the book file (supports `Range`); `404 not_found` when it is gone, or the book lies in no added folder, or its file — symlinks followed — lies outside it. The two page routes answer the same |
-| `GET` | `/api/v1/books/{id}/pages` | The pages of an image-folder or CBZ book, `[{"number": 1}, …]`, in natural order of their file names; `404 not_found` for other formats |
-| `GET` | `/api/v1/books/{id}/pages/{number}` | One page's image, counted from 1 |
-| `GET` | `/api/v1/covers/{kind}/{id}` | The cover of a `book`, `series` or `library`; a series or library without its own shows its first book's, in reading order; `404 not_found` when there is none |
-| `POST` | `/api/v1/scan` | Scan every added folder in the background and catalog new files — a new series joins its folder's library, if it has one. A renamed or moved file keeps its row; a book whose file is gone leaves the catalog, never from a folder that is missing, unreadable or empty; and the books in no folder and the cover files no row names go too. Answers `202` and the scan status, or `409 scan_in_progress` while a scan runs or waits |
-| `GET` | `/api/v1/scan/status` | The scan status. `state` is `idle` or `running`. `current` is the running scan: its `scope` (`"all"` or `{"folders": [paths]}`, each an added folder or one inside it, read with everything it holds), its `triggers` (`request`, `directory_added`, `watcher`), `started_at`, `phase` (`walking`, then `reading`) and the books it `found`, `added`, `updated` (read again: changed, or given a cover at last), left `unchanged`, found `moved` (renamed or moved, keeping their row) and `failed` so far. `pending` is the scan that waits, merged from every request since. `last` is how the last scan ended: its scope, triggers, `started_at`, `finished_at`, `outcome` (`completed`, or `failed` when it stopped early — also when it showed no sign of life for 2 minutes, as on a share that stopped answering, and was given up on), `added`, `updated`, `unchanged`, `moved`, `removed` (books whose files are gone), `failure_count` and the first 100 `failures`, each with its `directory_id`, its `relative_path` inside that folder (empty for the folder itself) and an `error_key`: `directory_missing`, `directory_unreadable`, `folder_unreadable`, `file_unreadable`, `store_failed`, `panicked` or `stalled` (where a scan given up on got stuck). Times are Unix seconds |
-| `GET` | `/api/v1/directories` | The scanned folders by path: `id`, `path` (its full path on the server), the `library_id` their series join, or `null`, and `watching` — whether its changes are scanned as they happen; `false` while its folder is gone or where the system refused to watch it. Every folder is looked at each minute, and one that is back — a drive plugged in again — is watched again and scanned |
-| `POST` | `/api/v1/directories` | Add a folder to scan from `{"path", "create_library", "library_type"?, "library_name"?}`: with `create_library`, a new library of `library_type` — required then — named `library_name` or after the folder receives its series. The stored books inside it that belong to no folder yet join it. Answers `201` and the folder, as listed; `400 directory_not_found` for a path that isn't absolute or names no folder, `409 directory_taken` for one added already, `409 directory_overlaps` for one inside or around another folder, the cover folder or the database's. Its first scan starts by itself; from then on a folder in it that changed is scanned once it went 10 s without a change, 5 minutes at the latest |
-| `DELETE` | `/api/v1/directories/{id}` | Remove a folder: its books leave the catalog, with the series left without books, and it is no longer watched; its library and the files stay. `204`, or `404 not_found` |
-| `POST` | `/api/v1/directories/{id}/scan` | Scan one added folder in the background; answers as `POST /api/v1/scan` does, and `404 not_found` for a folder that isn't added |
-| `DELETE` | `/api/v1/libraries/{id}` | Delete a library — `204`, or `404 not_found` for an id no library has; its series and books stay |
-| `POST` | `/api/v1/auth/register` | Sign up; the first account sends the setup code from the server log and becomes admin. An optional `locale` from `GET /api/v1/locales` becomes the account's language setting, which its mails are written in (`400 invalid_locale` for one the server doesn't offer). Answers the login tokens, or `202` when the account must first confirm its email — within 48 hours, or a later sign-up deletes it |
-| `POST` | `/api/v1/auth/verify_email` | Confirm the email with the mailed code and the password; answers like login |
-| `POST` | `/api/v1/auth/verify_email/resend` | Mail a new verification code; always `202` |
-| `POST` | `/api/v1/auth/login` | Log in; answers the session and refresh tokens, or a challenge when two-factor auth is on |
-| `POST` | `/api/v1/auth/login/totp` | The code step of a two-factor login: the challenge token as Bearer and the authenticator code; answers like login |
-| `POST` | `/api/v1/auth/login/recovery_code` | The same with a recovery code instead; each code works once |
-| `POST` | `/api/v1/auth/refresh` | New tokens for a refresh token (`Authorization: Bearer`) |
-| `POST` | `/api/v1/auth/logout` | End the session behind either token; always `204` |
-| `POST` | `/api/v1/auth/password_reset` | Mail a password-reset code; always `202`, so it never reveals whether an address has an account |
-| `POST` | `/api/v1/auth/password_reset/confirm` | Set a new password with the emailed code; confirms the email and ends every session |
-| `GET` | `/api/v1/account` | The signed-in user's own account: `id`, `username`, `email`, `email_verified`, `role`, `created_at`, `last_login` |
-| `PUT` | `/api/v1/account/password` | Change the password with the current one; `204`, and every other session ends |
-| `PUT` | `/api/v1/account/username` | Rename the account with `{"new_username"}`; `204`, or `409 username_taken` for a name another account has, in any case |
-| `PUT` | `/api/v1/account/email` | Change the email with `{"new_email", "password"}`: `202` and a code mailed to the new address, or `204` at once when email is off; `409 email_taken` for an address another account has |
-| `POST` | `/api/v1/account/email/confirm` | Confirm the change with the mailed code; `204`, and codes mailed to the old address stop working |
-| `GET` | `/api/v1/account/settings` | The user's settings, `{"locale": "de" \| null}`; `null` is not chosen |
-| `PUT` | `/api/v1/account/settings` | Replace them with the same shape and answer what is stored; a locale the server offers (`GET /api/v1/locales`), else `400 invalid_locale` |
-| `GET` | `/api/v1/account/totp` | Whether two-factor auth is on, and how many recovery codes are left |
-| `POST` | `/api/v1/account/totp` | Start setting up two-factor auth; answers the authenticator secret and its `otpauth://` URL |
-| `POST` | `/api/v1/account/totp/confirm` | Confirm the setup with a code and the password; answers 10 recovery codes, shown once, and ends the other sessions |
-| `POST` | `/api/v1/account/totp/disable` | Turn two-factor auth off with the password and an authenticator or recovery code; deletes the recovery codes and ends every session |
-| `POST` | `/api/v1/account/totp/recovery_codes` | New recovery codes with the password and an authenticator or recovery code; answers 10 codes, shown once, and the old ones stop working |
-| `GET` | `/api/v1/users` | Admin only: every account — username, email, verified, role, created and last login |
-| `PATCH` | `/api/v1/users/{id}` | Admin only: `{"role": "admin" \| "member"}` and/or `{"email_verified": true}`; answers the changed account, `409 last_admin` for demoting the last admin |
-| `GET` | `/api/v1/locales` | No session needed: the languages the server offers, in their order — `code`, `display_name` (in the language itself), `icon`, `is_default` |
-| `GET` | `/api/v1/locales/{code}/translations` | No session needed: a language's texts for the apps, `{"<namespace>": {"<name>": "<text>"}}`; a text the language lacks comes in English; `?sections=errors,settings` limits the namespaces; `404 not_found` for a language the server doesn't offer. Sent with an `ETag`; `If-None-Match` with it answers `304` without the texts |
-
-Errors answer with JSON `{"error": "<key>"}` and a matching status code.
-
-The other registered routes answer 501 `not_implemented` until their features are built.
-
-> **Security note:** by default the server listens on all interfaces over plain HTTP. Run it on
-> a trusted network only, or behind `tailscale serve` for HTTPS
-> ([docs/run-deploy/tailscale.md](docs/run-deploy/tailscale.md)).
-
-## Project docs
-
-- [Build checklist](docs/build-checklist.md): every feature, its tier in the build order, and its state.
-- [Feature docs](docs/features/): one document per feature — what to build and what is still undecided.
-- [Architecture](docs/ARCHITECTURE.md): the conventions the code follows.
-
-## Development
+Every route except `/health`, `/api/v1/auth/…` and the language reads needs the `session_token`
+that signing up or logging in answers:
 
 ```sh
-cargo build
-cargo test
-cargo clippy
-cargo fmt
+curl -H "Authorization: Bearer <session_token>" http://localhost:8080/api/v1/libraries
 ```
 
-`cargo test` needs no setup: database tests run against a fresh in-memory SQLite, and router
-tests against a temporary database file that is deleted afterwards.
+Errors answer `{"error": "<key>"}` with a matching status code. Every route is listed in
+`set_up_routes` in [src/routes/api_routes.rs](src/routes/api_routes.rs); the handlers live in
+[src/routes/api_caller/](src/routes/api_caller/).
+
+## Highlights
+
+**Library**
+
+- **Four formats:** PDF, EPUB, CBZ and folders of images.
+- **Series from file names:** volume, chapter (decimals too) and page numbers are parsed from
+  the name, and titles match regardless of case or of how their accents are encoded.
+- **Folder watching:** a changed folder is scanned again 10 seconds after its last change, and a
+  drive plugged back in is watched and scanned again.
+- **Careful, incremental scans:** only changed files are read again, a moved or renamed file
+  keeps its row, and nothing is removed from a folder that is missing or unreadable. A scan
+  stuck on a network share that stopped answering is given up after 2 minutes.
+- **Covers per format,** named by the file's BLAKE3 hash and written atomically; a series or a
+  library can show a cover you pick.
+- **Streaming with HTTP range requests,** and comic pages one by one. A file is served only when
+  its real path, symlinks resolved, lies inside its folder.
+
+**Accounts and security**
+
+- **Accounts:** Argon2id passwords, email verification over SMTP, throttled wrong passwords, and
+  admin and member roles.
+- **Sessions:** opaque tokens stored only as BLAKE3 hashes — a 15-minute session token and a
+  rotating 30-day refresh token.
+- **Two-factor login:** TOTP secrets encrypted at rest with XChaCha20-Poly1305, single-use
+  recovery codes, replay protection, and a lock on wrong codes that doubles up to 24 hours.
+- **Private by default:** listens on `127.0.0.1` only; other devices reach it over HTTPS through
+  `tailscale serve`.
+
+**Under the hood**
+
+- **One trait per database operation** (`Extract`, `Insert`, `Update`, `Search`, `Delete`): a
+  model names its table and columns, and the trait builds the queries.
+- **Transactions as closures:** `setup_new_transaction(|conn| …)` commits on `Ok` and rolls back
+  on `Err`.
+- **Typed errors:** one `thiserror` enum per domain, each variant mapped to a status code and a
+  stable key the app translates.
+- **No N+1 queries:** a list loads all its rows in one `IN (…)` query.
+- **SQLite behind an r2d2 pool,** with the migrations compiled into the binary.
+- **Translations** in English and German, sent with an ETag; mails go out in each user's
+  language.
+- **Release builds by GitHub Actions** for macOS, Windows and Linux.
+- **`cargo test` needs no setup:** in-memory SQLite and temporary files.
+
+More: [architecture](docs/ARCHITECTURE.md) · [development commands](docs/commands.md).
 
 ## License
 
