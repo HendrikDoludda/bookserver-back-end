@@ -16,6 +16,7 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 use rusqlite::{Connection, ToSql};
 use tracing::{debug, info, warn};
+use unicode_normalization::UnicodeNormalization;
 use walkdir::WalkDir;
 
 use crate::book_pages;
@@ -921,12 +922,19 @@ fn folder_fingerprint(folder: &Path) -> Option<String> {
     Some(hasher.finalize().to_hex().to_string())
 }
 
-/// The series a book titled `title` joins: the one whose match key is the title lowercased and that
-/// holds a book of the same directory, else a new one named as found and put into the directory's
+/// The key a series is found by: `title` lowercased, then composed — every letter with an accent
+/// as one character.
+fn match_key(title: &str) -> String {
+    // Lowercased in Rust, which knows every alphabet: "ÄRGER v02" finds "Ärger". Composed because
+    // older macOS disks store "ä" as "a" and an accent mark — last, as lowercasing may undo it.
+    title.to_lowercase().nfc().collect()
+}
+
+/// The series a book titled `title` joins: the one whose [`match_key`] is the title's and that holds
+/// a book of the same directory, else a new one named as found and put into the directory's
 /// library, if it has one. A failing lookup fails the book, as "none" would make a second series.
 fn series_for(conn: &Connection, title: &str, directory_id: i64) -> Result<i64, DatabaseError> {
-    // Lowercased in Rust, which knows every alphabet: "ÄRGER v02" finds "Ärger".
-    let key = title.to_lowercase();
+    let key = match_key(title);
     if let Some(id) =
         Database::series_of_directory_by_match_key_with_connection(conn, directory_id, &key)?
     {
@@ -1440,6 +1448,44 @@ mod tests {
         assert_eq!(
             series_rows(&temp.db),
             [("Ärger".to_string(), "ärger".to_string())]
+        );
+        assert_eq!(
+            series_of(&temp.db, &books[0]),
+            series_of(&temp.db, &books[1])
+        );
+    }
+
+    #[test]
+    fn a_match_key_is_lowercase_and_composed() {
+        for title in [
+            "\u{c4}rger",
+            "A\u{308}rger",
+            "a\u{308}rger",
+            "\u{c4}RGER",
+            "A\u{308}RGER",
+        ] {
+            assert_eq!(match_key(title), "\u{e4}rger", "{title:?}");
+        }
+        assert_eq!(match_key("Berserk"), "berserk");
+    }
+
+    #[test]
+    fn a_name_with_its_accents_stored_apart_joins_the_series_of_one_with_them_together() {
+        let dir = TempDir::new();
+        let temp = TempDatabase::open();
+        let directory = add_directory(&temp.db, dir.path(), None);
+
+        // "Ä" as one character, then as "A" and a combining diaeresis, as older macOS disks store it.
+        let books = scan_books(
+            &dir,
+            &temp.db,
+            directory,
+            &["\u{c4}rger v01.cbz", "A\u{308}rger v02.cbz"],
+        );
+
+        assert_eq!(
+            series_rows(&temp.db),
+            [("\u{c4}rger".to_string(), "\u{e4}rger".to_string())]
         );
         assert_eq!(
             series_of(&temp.db, &books[0]),

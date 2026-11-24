@@ -15,7 +15,7 @@
 | HTTPS (TLS) | 1 | completed | [32-https-tls](features/32-https-tls.md) |
 | Recovery codes | 1 | completed | [50-recovery-codes](features/50-recovery-codes.md) |
 | Translation catalog (i18n) | F0 | completed | [13-internationalization](features/13-internationalization.md) |
-| Reading files | F1 | in progress | [38-reading-files](features/38-reading-files.md) |
+| Reading files | F1 | completed | [38-reading-files](features/38-reading-files.md) |
 | Browsing | F1 | completed | [43-browsing](features/43-browsing.md) |
 | Frontend localization | F1 | completed | [57-frontend-localization](features/57-frontend-localization.md) |
 | Account screens | F1 | completed | [58-account-screens](features/58-account-screens.md) |
@@ -26,7 +26,7 @@
 | Table of contents | F1 | completed | [82-table-of-contents](features/82-table-of-contents.md) |
 | App layout | F1 | completed | [83-app-layout](features/83-app-layout.md) |
 | Library & series management | 2 | completed | [01-library-and-series-management](features/01-library-and-series-management.md) |
-| Directory scanning | 2 | in progress | [34-directory-scanning](features/34-directory-scanning.md) |
+| Directory scanning | 2 | completed | [34-directory-scanning](features/34-directory-scanning.md) |
 | Scannable directories | 2 | completed | [35-scannable-directories](features/35-scannable-directories.md) |
 | Covers | 2 | completed | [36-covers](features/36-covers.md) |
 | File watching | 2 | completed | [37-file-watching](features/37-file-watching.md) |

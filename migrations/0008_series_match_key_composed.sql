@@ -1,0 +1,3 @@
+-- Every series' match key composed (NFC), as the scanner now builds them. SQLite can't normalize
+-- Unicode, so this migration's Rust step does it: `compose_match_keys` in
+-- src/database_related_scripts/migrations.rs.

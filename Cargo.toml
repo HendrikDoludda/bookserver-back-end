@@ -1,6 +1,6 @@
 [package]
 name = "bookserver_backend"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2021"
 license = "MIT"
 publish = false
@@ -47,6 +47,7 @@ chrono = {version="0.4.45", features=["serde"]}
 directories = "6.0.0"
 totp-rs = { version = "6.0.0", features = ["otpauth"] }
 notify = { version = "9.0.0", features = ["tokio"] }
+unicode-normalization = "0.1.26"
 
 # Unoptimised Argon2 takes seconds per hash, and the tests hash a lot.
 [profile.dev.package.argon2]

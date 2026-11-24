@@ -1,6 +1,6 @@
 # Reading files
 
-State: in progress
+State: completed
 
 `GET /books/{id}/file` streams a book's file with HTTP range support through `tower-http`'s
 `ServeFile`, and `GET /books/{id}` returns its metadata (404 for an unknown id). PDF,
@@ -32,4 +32,11 @@ EPUBs page by page.
 - [x] 2 h · Fixed-layout lines placed by `bottom` as well as `top`: measured from the bottom of the nearest placed box around them that gives its height, else the page's, and `top` wins when both are given; a PDF-converted book places every line by `bottom`, so today all its text lands on the page's top edge [FE]
 - [x] 3 h · Fixed-layout lines transformed by `transform` — `scale()`, `rotate()`, `matrix()` and lists of them — around their `transform-origin`, CSS's centre when none is given, instead of `rotate()` alone around the top left; a PDF-converted book sets its text 4× too big and scales it to a quarter [FE]
 - [x] 3 h · A stylesheet or `style` attribute that holds a declaration csslib can't parse loses only that declaration — a selector it can't parse only its rule: the app splits rules and declarations itself and hands csslib a rule's selectors alone. Today csslib stops at the first such error and drops the rest of the file — `background-size:auto100%` loses every page picture of a book [FE]
-- [ ] ? h · A fixed-layout page's picture is drawn at its CSS size whatever width it was decoded at — with `background-size: auto` (`BoxFit.none`) it is drawn at the decoded size, so on a window whose shorter side is under ~390 points it comes out smaller than its page [FE]
+- [x] 1.5 h · A fixed-layout page's `<style>` elements are stylesheets of that page, read with its linked ones in the order the head lists them [FE]
+- [x] 1.5 h · A stylesheet's `@import` brings in the imported file's rules, ahead of its own: resolved from the importing file, skipped when limited to another medium (`print`), each file once along a chain [FE]
+- [x] 3 h · A `transform` on a fixed-layout box applies to every line inside it, around the box's `transform-origin`, combined with the boxes around it and the line's own [FE]
+- [x] 2.5 h · A fixed-layout page draws its `<img>` elements: where their box places them, at their CSS size, else their `width` and `height` attributes, else their own; above the background and below the text, inside the transforms of the boxes around them [FE]
+- [x] 2 h · A fixed-layout line's inline elements keep their `margin-left`, drawn as a spaced word joiner before their text — a PDF-converted book writes some word gaps only as such a margin, so its words run together without it [FE]
+- [x] 1 h · A fixed-layout box placed with `position: absolute` or `fixed` and no height is 0 tall, as CSS makes a box whose content is all placed: a `bottom` inside it is measured from the box's own place, not the page's bottom. A PDF-converted book pins its big numbers to such boxes, so today they land below the page [FE]
+- [x] 2.5 h · Fixed-layout colours with alpha and by name: `transparent`, `rgba()` and `rgb(… / a)`, `#rgba` and `#rrggbbaa`, and CSS's 148 named colours; a fully transparent `background-color` counts as none. Today the app reads none of these and paints such text in its parent's colour — a PDF-converted book hides template text with `color: transparent`, so a black "00" shows behind its date tabs [FE]
+- [x] 0.5 h · A fixed-layout page's picture with `background-size: auto` is decoded whole, as an `<img>` without a size is — it is drawn at its decoded size (`BoxFit.none`), so decoded at the reader's decode width it comes out smaller than its page in a small window [FE]

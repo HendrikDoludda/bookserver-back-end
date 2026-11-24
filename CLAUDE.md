@@ -304,7 +304,7 @@ tests green — and what it would contain. The developer decides.
 
 Rust 2021 edition (rustc 1.96) · Axum 0.8 on Tokio · SQLite compiled in via rusqlite 0.40
 (`bundled`) with an r2d2 pool · Argon2 passwords, totp-rs, mail-send (SMTP) · pdfium-render, zip, quick-xml and image
-for covers · walkdir and notify for scanning and watching. Code lives in `src/`, schema in
+for covers · walkdir and notify for scanning and watching · unicode-normalization for series keys. Code lives in `src/`, schema in
 `migrations/`. Commands go in `commands.md`.
 
 ### Rules learned

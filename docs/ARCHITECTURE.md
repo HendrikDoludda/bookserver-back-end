@@ -15,7 +15,7 @@
 - `src/stream_reader.rs` — `serve_file`: a file on disk, with HTTP range support.
 - `src/book_pages.rs` — the pages of an image-folder or CBZ book, in natural order and numbered from 1: the one listing behind the page routes and the cover picker; and each page's size.
 - `src/test_support.rs` — shared test fixtures, compiled only for tests.
-- `migrations/` — numbered SQL files, embedded at compile time.
+- `migrations/` — numbered SQL files, embedded at compile time; a migration's Rust step lives in `migrations.rs`.
 - `assets/` — `example-cover.png`, the fallback cover, embedded at compile time.
 - `translations/` — the shipped translations, embedded at compile time: `<language>/language.json`, and one JSON file per namespace under `frontend/` (sent to the apps) or `backend/` (rendered by the server).
 
@@ -94,7 +94,7 @@
 - Every reference to another table is a declared `FOREIGN KEY` — `PRAGMA foreign_keys = ON` enforces only declared ones.
 - Times are stored as `INTEGER` unix seconds and read with `read_time` (must have a value — NULL is an error naming the column) or `read_optional_time` (NULL is `None`).
 - A column is nullable exactly when its Rust field is an `Option`.
-- The scanner finds a series by `match_key` — the title it was first found under, lowercased in Rust — among the series holding a book of the same directory; never by `name`, which an admin edits.
+- The scanner finds a series by `match_key` — the title it was first found under, lowercased and then composed (NFC) in Rust — among the series holding a book of the same directory; never by `name`, which an admin edits.
 - The scan reads a book's file outside any transaction, then stores its series, library link and row in one `IMMEDIATE` transaction of their own — never one per scan, which would hold the write lock for its whole length.
 - No file-system call runs inside a transaction, or while a pooled connection is held: on a share that stopped answering it would keep that connection for good.
 - A scan opens a stored book's file only when its `fingerprint` changed — a file's size and nanosecond time, an image folder's digest of its pages' — or when it still lacks a cover; a changed file renews its row under the same id and series.
@@ -103,6 +103,7 @@
 - A scan reconciles after its inserts: a new file first takes over the row with its hash that the scan lost, then the rows whose files no walk met are deleted — never in a directory whose root is missing or unreadable, or holds no book when read whole, nor under a folder the walk couldn't read — and the series they leave without books.
 - Back up SQLite with `VACUUM INTO`, never by copying the file — under WAL a plain copy is not a valid backup.
 - Schema changes: a new numbered `.sql` in `migrations/`, registered in `MIGRATIONS`; an applied migration is never edited.
+- A data change SQL can't express (Unicode normalization) is its migration's Rust `step`, run after the SQL in the migration's transaction; the `.sql` then only names the step.
 - A migration rebuilds a table — create, copy with the ids and `sqlite_sequence`'s counter, drop, rename — only while no other table references it: migrations run with foreign keys on, so dropping a referenced table fires its children's `ON DELETE`. Otherwise it adds columns with `ALTER TABLE … ADD COLUMN`.
 
 ## Tests

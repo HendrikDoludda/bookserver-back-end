@@ -1,14 +1,20 @@
 use crate::database_related_scripts::db::logged;
 use crate::error_types::DatabaseError;
 use rusqlite::{Connection, OptionalExtension};
+use unicode_normalization::UnicodeNormalization;
 
-// A single migration: a version number, a human-readable label, and the SQL
-// to run. Versions must be unique and applied in ascending order.
+// A single migration: a version number, a human-readable label, the SQL
+// to run, and a Rust step to run after it for a change SQLite's SQL can't
+// make. Versions must be unique and applied in ascending order.
 struct Migration {
     version: i64,
     name: &'static str,
     sql: &'static str,
+    step: Option<Step>,
 }
+
+/// Rust a migration runs after its SQL, inside the migration's transaction.
+type Step = fn(&Connection) -> Result<(), DatabaseError>;
 
 // `include_str!` reads the file at COMPILE time and bakes its contents into
 // the binary as a &'static str. That means the migrations/ folder does not
@@ -19,43 +25,85 @@ const MIGRATIONS: &[Migration] = &[
         version: 1,
         name: "initial_schema",
         sql: include_str!("../../migrations/0001_initial_schema.sql"),
+        step: None,
     },
     Migration {
         version: 2,
         name: "reading_modes",
         sql: include_str!("../../migrations/0002_reading_modes.sql"),
+        step: None,
     },
     Migration {
         version: 3,
         name: "books_series_foreign_key",
         sql: include_str!("../../migrations/0003_books_series_foreign_key.sql"),
+        step: None,
     },
     Migration {
         version: 4,
         name: "cover_file_names",
         sql: include_str!("../../migrations/0004_cover_file_names.sql"),
+        step: None,
     },
     Migration {
         version: 5,
         name: "series_match_key",
         sql: include_str!("../../migrations/0005_series_match_key.sql"),
+        step: None,
     },
     Migration {
         version: 6,
         name: "directories",
         sql: include_str!("../../migrations/0006_directories.sql"),
+        step: None,
     },
     Migration {
         version: 7,
         name: "book fingerprints",
         sql: include_str!("../../migrations/0007_book_fingerprints.sql"),
+        step: None,
+    },
+    Migration {
+        version: 8,
+        name: "series_match_key_composed",
+        sql: include_str!("../../migrations/0008_series_match_key_composed.sql"),
+        step: Some(compose_match_keys),
     },
 ];
 
+/// Migration 8: every series' match key composed (NFC), as the scanner now builds its keys.
+fn compose_match_keys(conn: &Connection) -> Result<(), DatabaseError> {
+    let keys = conn
+        .prepare("SELECT id, match_key FROM series ORDER BY id")
+        .and_then(|mut statement| {
+            statement
+                .query_map([], |row| {
+                    Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+                })?
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .map_err(logged("reading", "series", DatabaseError::QueryFailure))?;
+    for (id, key) in keys {
+        let composed: String = key.nfc().collect();
+        if composed != key {
+            conn.execute(
+                "UPDATE series SET match_key = ?1 WHERE id = ?2",
+                rusqlite::params![composed, id],
+            )
+            .map_err(logged(
+                "composing the match key of",
+                "series",
+                DatabaseError::OperationFailure,
+            ))?;
+        }
+    }
+    Ok(())
+}
+
 // Apply every migration that has not yet been recorded in `schema_migrations`.
 // Each migration runs inside its own transaction: if anything inside the SQL
-// fails, SQLite rolls the whole thing back so the DB never ends up in a
-// half-migrated state.
+// or its step fails, SQLite rolls the whole thing back so the DB never ends up
+// in a half-migrated state.
 pub fn run(conn: &mut Connection) -> Result<(), DatabaseError> {
     // 1. Bookkeeping table. Created with the same idempotent style as the
     //    real tables, so this function is safe to call on every startup.
@@ -103,6 +151,9 @@ pub fn run(conn: &mut Connection) -> Result<(), DatabaseError> {
             m.name,
             DatabaseError::DatabaseInitializationFailure,
         ))?;
+        if let Some(step) = m.step {
+            step(&tx)?;
+        }
 
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -1106,6 +1157,96 @@ mod tests {
             )
             .unwrap();
         assert_eq!(index, 1);
+    }
+
+    /// A database as a server of the seventh schema left it.
+    fn seventh_schema() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        configure(&conn).unwrap();
+        for migration in &MIGRATIONS[..7] {
+            conn.execute_batch(migration.sql).unwrap();
+        }
+        conn.execute_batch(
+            "CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, \
+             applied_at INTEGER NOT NULL); \
+             INSERT INTO schema_migrations (version, applied_at) \
+             VALUES (1, 0), (2, 0), (3, 0), (4, 0), (5, 0), (6, 0), (7, 0);",
+        )
+        .unwrap();
+        conn
+    }
+
+    fn series_names_and_keys(conn: &Connection) -> Vec<(String, String)> {
+        conn.prepare("SELECT name, match_key FROM series ORDER BY id")
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
+    }
+
+    fn applied(conn: &Connection, version: i64) -> bool {
+        conn.query_row(
+            "SELECT COUNT(*) FROM schema_migrations WHERE version = ?1",
+            [version],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap()
+            == 1
+    }
+
+    #[test]
+    fn a_database_of_the_seventh_schema_gets_its_match_keys_composed() {
+        let mut conn = seventh_schema();
+        let series = |name: &str, key: &str| {
+            conn.execute(
+                "INSERT INTO series (name, match_key) VALUES (?1, ?2)",
+                params![name, key],
+            )
+            .unwrap();
+        };
+        // "Ä" as "A" and a combining diaeresis, as older macOS disks store it; then as one character.
+        series("A\u{308}rger", "a\u{308}rger");
+        series("\u{c4}rger", "\u{e4}rger");
+        series("Berserk", "berserk");
+
+        run(&mut conn).unwrap();
+
+        let expected = [
+            ("A\u{308}rger", "\u{e4}rger"),
+            ("\u{c4}rger", "\u{e4}rger"),
+            ("Berserk", "berserk"),
+        ]
+        .map(|(name, key)| (name.to_string(), key.to_string()));
+        assert_eq!(
+            series_names_and_keys(&conn),
+            expected,
+            "only the keys composed, the names as they were"
+        );
+        assert!(applied(&conn, 8));
+    }
+
+    #[test]
+    fn a_migration_whose_step_fails_is_undone_whole_and_not_recorded() {
+        let mut conn = seventh_schema();
+        conn.execute_batch(
+            "INSERT INTO series (name, match_key) VALUES \
+             ('A\u{308}rger', 'a\u{308}rger'), ('O\u{308}l', 'o\u{308}l'); \
+             CREATE TRIGGER refuse_the_second BEFORE UPDATE ON series WHEN NEW.id = 2 \
+             BEGIN SELECT RAISE(ABORT, 'refused'); END;",
+        )
+        .unwrap();
+
+        assert!(run(&mut conn).is_err());
+
+        let expected = [("A\u{308}rger", "a\u{308}rger"), ("O\u{308}l", "o\u{308}l")]
+            .map(|(name, key)| (name.to_string(), key.to_string()));
+        assert_eq!(
+            series_names_and_keys(&conn),
+            expected,
+            "the first key, composed before the second failed, is back as it was"
+        );
+        assert!(!applied(&conn, 8));
     }
 
     #[test]
