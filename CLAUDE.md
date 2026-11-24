@@ -70,7 +70,8 @@ One row per feature. No description, no rationale, no sub-items, no dates, no co
 
 `Tier` is where the feature sits in the build order — `—` until one is assigned. It lives in
 this table only. The numbered tiers `0`–`5` are Phase 1, the MVP, and run in order: finish
-every feature in one before starting the next; `5` ends Phase 1 with the first public release.
+every feature in one before starting the next; `5` ends Phase 1 with the 1.0 release, and the
+`0.x` releases before it ship whatever is completed.
 `F0` / `F1` are the frontend track — the Flutter app — which opens after Tier 1;
 `cross-cutting` rides along with whatever touches it, `Phase 2` is parked, `optional` waits for
 an accept, and `ongoing` never holds anything up.
@@ -107,6 +108,8 @@ from the checklist.>
 Drop empty sections, and the `Blocked` line the moment it is not. No implementation history, no
 as-built narrative — the code and the diff are the record.
 
+- **Numbers are never reused.** A new feature takes a number no feature has had before, so a
+  number in a commit or a note always means one feature.
 - **One task, one checkbox.** A task is one change that can be done and verified on its own; if
   it has parts that could be done separately, it is several tasks.
 - **Estimate first.** Every task starts with its estimate in hours — `? h` until there is one.

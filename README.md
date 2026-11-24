@@ -4,7 +4,7 @@ A self-hosted server for your own book, manga and comic library, written in Rust
 folders, catalogs the files in SQLite, extracts their covers and serves everything over an HTTP
 API to the [bookserver app](https://github.com/HendrikDoludda/bookserver-front-end).
 
-Not released yet: [what works today](docs/project-state.md) ·
+Early releases are out: [what works today](docs/project-state.md) ·
 [what comes next](docs/build-checklist.md).
 
 ## Quick start

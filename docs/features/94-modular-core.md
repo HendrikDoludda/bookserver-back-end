@@ -7,8 +7,8 @@ migration runner, the route table — and media modules attached to it: books fi
 [video](20-video.md) and [documents](21-documents.md) next, each owning its tables,
 migrations, endpoints and format-specific code, and each switchable off. It comes first in
 Phase 2, so the module interface is designed against a second real module; until then the
-Modules rules in [ARCHITECTURE.md](../ARCHITECTURE.md) keep the boundary clean, and
-[07](07-api-route-naming.md) settles the route shape.
+Modules rules in [ARCHITECTURE.md](../ARCHITECTURE.md) keep the boundary clean, and its API
+rules settle the route shape.
 
 ## Build
 - [ ] ? h · Cargo workspace: `crates/core`, `crates/books` and a thin `crates/server` binary — modules depend on `core`, never the other way round [BE]

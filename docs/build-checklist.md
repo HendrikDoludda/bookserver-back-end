@@ -2,34 +2,7 @@
 
 | Feature | Tier | State | Doc |
 |---|---|---|---|
-| API route naming | 0 | completed | [07-api-route-naming](features/07-api-route-naming.md) |
-| Database layer fixes | 0 | completed | [26-database-layer-fixes](features/26-database-layer-fixes.md) |
-| Error responses & status codes | 0 | completed | [33-error-responses](features/33-error-responses.md) |
-| Login, logout & sessions | 1 | completed | [03-login-and-sessions](features/03-login-and-sessions.md) |
-| Two-factor auth (TOTP) | 1 | completed | [04-two-factor-auth-totp](features/04-two-factor-auth-totp.md) |
-| Registration & email verification | 1 | completed | [27-registration-and-email-verification](features/27-registration-and-email-verification.md) |
-| Roles & access control | 1 | completed | [28-roles-and-access-control](features/28-roles-and-access-control.md) |
-| Account management | 1 | completed | [29-account-management](features/29-account-management.md) |
-| Password reset | 1 | completed | [30-password-reset](features/30-password-reset.md) |
-| Per-user settings | 1 | completed | [31-per-user-settings](features/31-per-user-settings.md) |
-| HTTPS (TLS) | 1 | completed | [32-https-tls](features/32-https-tls.md) |
-| Recovery codes | 1 | completed | [50-recovery-codes](features/50-recovery-codes.md) |
-| Translation catalog (i18n) | F0 | completed | [13-internationalization](features/13-internationalization.md) |
-| Reading files | F1 | completed | [38-reading-files](features/38-reading-files.md) |
-| Browsing | F1 | completed | [43-browsing](features/43-browsing.md) |
-| Frontend localization | F1 | completed | [57-frontend-localization](features/57-frontend-localization.md) |
-| Account screens | F1 | completed | [58-account-screens](features/58-account-screens.md) |
 | Flutter app | F1 | in progress | [73-flutter-app](features/73-flutter-app.md) |
-| Left- and right-handed controls | F1 | completed | [79-handedness](features/79-handedness.md) |
-| Reading direction | F1 | completed | [80-reading-direction](features/80-reading-direction.md) |
-| Reader view settings | F1 | completed | [81-reader-view-settings](features/81-reader-view-settings.md) |
-| Table of contents | F1 | completed | [82-table-of-contents](features/82-table-of-contents.md) |
-| App layout | F1 | completed | [83-app-layout](features/83-app-layout.md) |
-| Library & series management | 2 | completed | [01-library-and-series-management](features/01-library-and-series-management.md) |
-| Directory scanning | 2 | completed | [34-directory-scanning](features/34-directory-scanning.md) |
-| Scannable directories | 2 | completed | [35-scannable-directories](features/35-scannable-directories.md) |
-| Covers | 2 | completed | [36-covers](features/36-covers.md) |
-| File watching | 2 | completed | [37-file-watching](features/37-file-watching.md) |
 | Read state | 3 | not started | [02-read-state](features/02-read-state.md) |
 | Metadata enrichment | 3 | not started | [09-metadata-enrichment](features/09-metadata-enrichment.md) |
 | Search | 3 | not started | [11-search](features/11-search.md) |
@@ -53,7 +26,6 @@
 | Security hardening | cross-cutting | in progress | [12-security-hardening](features/12-security-hardening.md) |
 | Email & notifications | cross-cutting | in progress | [14-email-and-notifications](features/14-email-and-notifications.md) |
 | Active sessions | cross-cutting | not started | [51-active-sessions](features/51-active-sessions.md) |
-| File reconciliation | cross-cutting | completed | [53-file-reconciliation](features/53-file-reconciliation.md) |
 | Security audit log | cross-cutting | not started | [55-security-audit-log](features/55-security-audit-log.md) |
 | Network shares & removable drives | cross-cutting | in progress | [84-network-shares-and-removable-drives](features/84-network-shares-and-removable-drives.md) |
 | Video library & direct play | Phase 2 | blocked | [20-video](features/20-video.md) |

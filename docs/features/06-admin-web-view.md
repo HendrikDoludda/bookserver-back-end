@@ -9,7 +9,7 @@ the same HTTP API: no endpoint or code path exists that only it can use.
 ## Build
 - [ ] ? h · Serve the admin UI under `/admin` with its own SPA fallback (`ServeDir` with a `ServeFile` index fallback, mounted with `nest_service` on the outer router), so deep links reload while unknown `/api/v1/…` paths still get the API's 404 — shipped per the build decision [BE]
 - [ ] ? h · If served from disk, read the UI directory from config, not a path relative to the working directory [BE]
-- [ ] ? h · Admin UI shell with login, using the same token transport as the main frontend ([03](03-login-and-sessions.md)) [FE]
+- [ ] ? h · Admin UI shell with login, using the same token transport as the main frontend (`Authorization: Bearer`) [FE]
 - [ ] ? h · Library and series management screens [FE]
 - [ ] ? h · Scannable-directory management screen [FE]
 - [ ] ? h · User management screen [FE]

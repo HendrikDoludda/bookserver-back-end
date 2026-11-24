@@ -2,8 +2,8 @@
 
 State: not started
 
-Control which users see which libraries — a kids' library, for example. Optional, and only
-worth weighing once roles exist ([28](28-roles-and-access-control.md)).
+Control which users see which libraries — a kids' library, for example. Optional; it builds on
+the admin and member roles (`Role`).
 
 ## Build
 - [ ] ? h · User↔library access table with the composite key `(user_id, library_id)` and no `id` — dedicated `Database` methods instead of `Extract`, like `library_elements` [DB]

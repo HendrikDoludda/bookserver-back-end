@@ -7,7 +7,7 @@ every card. Optional — not scheduled.
 
 ## Build
 - [ ] ? h · Generate thumbnails with `image::DynamicImage::thumbnail` (`image` is already a dependency), per the generation decision [BE]
-- [ ] ? h · Serve a thumbnail or the full cover through the [cover route](36-covers.md), chosen by size [BE]
+- [ ] ? h · Serve a thumbnail or the full cover through the cover route (`GET /covers/{kind}/{id}`), chosen by size [BE]
 - [ ] ? h · Use thumbnails in grid views [FE]
 
 ## Open decisions

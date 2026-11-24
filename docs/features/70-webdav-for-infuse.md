@@ -16,5 +16,5 @@ Tailscale; it is not hardened for the open internet.
 
 ## Open decisions
 - [ ] WebDAV via `dav-server`, or a plain SMB / NFS / DLNA share? — blocks: mounting `dav-server`. Suggested: `dav-server` — one binary, auth stays in the backend, and it inherits the server's TLS; a share is the fallback if mounting proves annoying.
-- [ ] How does a basic-auth door coexist with [two-factor auth](04-two-factor-auth-totp.md)? Infuse can't prompt for a code, so the account password alone would bypass it — blocks: WebDAV credentials. Suggested: require TLS and issue a device-scoped WebDAV credential instead of accepting the account password.
+- [ ] How does a basic-auth door coexist with two-factor auth? Infuse can't prompt for a code, so the account password alone would bypass it — blocks: WebDAV credentials. Suggested: require TLS and issue a device-scoped WebDAV credential instead of accepting the account password.
 - [ ] Must watch progress sync between the app and Infuse? Infuse keeps its own position and won't report it over WebDAV — blocks: nothing yet; a yes would add work. Suggested: no — the app is the door that reports progress.
