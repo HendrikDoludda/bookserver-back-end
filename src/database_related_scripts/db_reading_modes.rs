@@ -81,6 +81,22 @@ pub fn save(
     Ok(())
 }
 
+/// Gives each user's mode for series `from` to series `into` too, unless they have one for `into`.
+pub fn carry_over(conn: &Connection, from: i64, into: i64) -> Result<(), DatabaseError> {
+    conn.execute(
+        "INSERT INTO reading_modes (user_id, series_id, mode) \
+         SELECT user_id, ?2, mode FROM reading_modes WHERE series_id = ?1 \
+         ON CONFLICT (user_id, series_id) DO NOTHING",
+        params![from, into],
+    )
+    .map_err(logged(
+        "inserting into",
+        "reading_modes",
+        DatabaseError::InsertionFailure,
+    ))?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -130,6 +146,34 @@ mod tests {
         assert_eq!(find(&conn, alice, monster).unwrap(), None);
         assert_eq!(find(&conn, bob, berserk).unwrap(), None);
         assert_eq!(find(&conn, bob, monster).unwrap(), Some(ReadingMode::Ltr));
+    }
+
+    #[test]
+    fn a_mode_carries_over_unless_the_user_has_one_for_the_other_series() {
+        let conn = memory_connection();
+        let alice = insert_user(&conn, "alice");
+        let bob = insert_user(&conn, "bob");
+        let carol = insert_user(&conn, "carol");
+        let from = insert_series(&conn, "hellboybprd");
+        let into = insert_series(&conn, "Hellboy BPRD");
+        save(&conn, alice, from, ReadingMode::Rtl).unwrap();
+        save(&conn, bob, from, ReadingMode::Rtl).unwrap();
+        save(&conn, bob, into, ReadingMode::Ltr).unwrap();
+
+        carry_over(&conn, from, into).unwrap();
+
+        assert_eq!(find(&conn, alice, into).unwrap(), Some(ReadingMode::Rtl));
+        assert_eq!(
+            find(&conn, bob, into).unwrap(),
+            Some(ReadingMode::Ltr),
+            "bob's own choice stays"
+        );
+        assert_eq!(find(&conn, carol, into).unwrap(), None);
+        assert_eq!(
+            find(&conn, alice, from).unwrap(),
+            Some(ReadingMode::Rtl),
+            "a copy: `from` keeps its modes until it is deleted"
+        );
     }
 
     #[test]

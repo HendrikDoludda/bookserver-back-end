@@ -759,6 +759,34 @@ impl Database {
         ))
     }
 
+    /// The keys the series answers to besides its own `match_key`, sorted.
+    pub fn extra_match_keys_with_connection(
+        conn: &Connection,
+        series_id: i64,
+    ) -> Result<Vec<String>, DatabaseError> {
+        let mut stmt = conn
+            .prepare(
+                "SELECT match_key FROM series_match_keys WHERE series_id = ?1 ORDER BY match_key",
+            )
+            .map_err(logged(
+                "reading",
+                "series_match_keys",
+                DatabaseError::TaskPreparationFailure,
+            ))?;
+        let rows = stmt
+            .query_map([series_id], |row| row.get::<_, String>(0))
+            .map_err(logged(
+                "reading",
+                "series_match_keys",
+                DatabaseError::QueryFailure,
+            ))?;
+        rows.collect::<Result<Vec<String>, _>>().map_err(logged(
+            "reading",
+            "series_match_keys",
+            DatabaseError::NextRowFailure,
+        ))
+    }
+
     /// Whether the library holds the series.
     pub fn library_holds_series_with_connection(
         conn: &Connection,

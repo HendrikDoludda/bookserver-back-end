@@ -1,7 +1,7 @@
 //! What an admin changes about libraries and series: creating and editing libraries, which series
 //! they hold, editing and deleting series, and the covers both show.
 
-use std::{ops::RangeInclusive, sync::Arc};
+use std::{collections::BTreeSet, ops::RangeInclusive, sync::Arc};
 
 use rusqlite::{Connection, ToSql};
 
@@ -9,11 +9,13 @@ use crate::{
     data_models::books_model::{
         LibraryChanges, LibrarySummary, NewLibrary, SeriesChanges, SeriesListing, SeriesSummary,
     },
+    database_related_scripts::db_reading_modes,
     db::Database,
     error_types::{AppErrors, DatabaseError, LibraryError},
     models::{
-        BookMetadata, BookSeriesMetadata, DatabaseTypes, LibraryDatabaseColumns, LibraryMetadata,
-        SeriesDatabaseColumns, SeriesLibraryConnection, WithId,
+        BookDatabaseColumns, BookMetadata, BookSeriesMetadata, DatabaseTypes,
+        LibraryDatabaseColumns, LibraryMetadata, SeriesDatabaseColumns, SeriesLibraryConnection,
+        SeriesMatchKey, WithId,
     },
     routes::covers,
 };
@@ -235,6 +237,116 @@ pub async fn delete_series(db: Arc<Database>, series_id: i64) -> Result<(), AppE
         Ok(())
     })
     .await
+}
+
+/// Merges series `series_id` into series `into_id` and answers the kept series as a library's
+/// series list sends it. The merged series' books, libraries, reading modes and keys move over,
+/// its fields fill only what the kept series leaves empty, and it is deleted. Merging a series
+/// into itself is refused.
+pub async fn merge_series(
+    db: Arc<Database>,
+    into_id: i64,
+    series_id: i64,
+) -> Result<WithId<SeriesSummary>, AppErrors> {
+    if series_id == into_id {
+        return Err(AppErrors::InvalidRequest);
+    }
+    db.transact(move |conn| {
+        let merged = Database::get_entry_with_connection::<BookSeriesMetadata>(conn, series_id)?;
+        let kept = Database::get_entry_with_connection::<BookSeriesMetadata>(conn, into_id)?;
+
+        // Before the delete below, which `books.series` (`ON DELETE RESTRICT`) would refuse.
+        for book_id in Database::get_books_in_series_with_connection(conn, series_id)? {
+            Database::update_value_with_connection::<BookMetadata>(
+                conn,
+                BookDatabaseColumns::Series,
+                &into_id,
+                book_id,
+            )?;
+        }
+        let libraries = Database::libraries_per_series_with_connection(conn)?
+            .remove(&series_id)
+            .unwrap_or_default();
+        for library_id in libraries {
+            if !Database::library_holds_series_with_connection(conn, library_id, into_id)? {
+                Database::insert_with_connection(
+                    conn,
+                    &SeriesLibraryConnection {
+                        series_id: into_id,
+                        library_id,
+                    },
+                )?;
+            }
+        }
+        db_reading_modes::carry_over(conn, series_id, into_id)?;
+        fill_empty_fields(conn, into_id, &kept, &merged)?;
+        take_over_keys(conn, series_id, into_id, &kept, &merged)?;
+        Database::remove_entry_with_connection(conn, DatabaseTypes::Series, series_id)?;
+        series_summary(conn, into_id)
+    })
+    .await
+}
+
+/// Gives the kept series the merged one's description, cover and release years where it has none.
+fn fill_empty_fields(
+    conn: &Connection,
+    into_id: i64,
+    kept: &BookSeriesMetadata,
+    merged: &BookSeriesMetadata,
+) -> Result<(), AppErrors> {
+    let mut columns = Vec::new();
+    let mut values: Vec<&dyn ToSql> = Vec::new();
+    if kept.description.is_none() && merged.description.is_some() {
+        columns.push(SeriesDatabaseColumns::Description);
+        values.push(&merged.description);
+    }
+    if kept.cover_image.is_none() && merged.cover_image.is_some() {
+        columns.push(SeriesDatabaseColumns::CoverImage);
+        values.push(&merged.cover_image);
+    }
+    // As a pair: the kept series' first year with the merged one's last could be out of order.
+    let kept_has_years = kept.start_release_year.is_some() || kept.end_release_year.is_some();
+    let merged_has_years = merged.start_release_year.is_some() || merged.end_release_year.is_some();
+    if !kept_has_years && merged_has_years {
+        columns.push(SeriesDatabaseColumns::StartReleaseYear);
+        values.push(&merged.start_release_year);
+        columns.push(SeriesDatabaseColumns::EndReleaseYear);
+        values.push(&merged.end_release_year);
+    }
+    if !columns.is_empty() {
+        Database::update_multiple_values_with_connection::<BookSeriesMetadata>(
+            conn, &columns, &values, into_id,
+        )?;
+    }
+    Ok(())
+}
+
+/// Gives the kept series every key the merged one answers to that it doesn't answer to already.
+fn take_over_keys(
+    conn: &Connection,
+    series_id: i64,
+    into_id: i64,
+    kept: &BookSeriesMetadata,
+    merged: &BookSeriesMetadata,
+) -> Result<(), AppErrors> {
+    let mut known: BTreeSet<String> = Database::extra_match_keys_with_connection(conn, into_id)?
+        .into_iter()
+        .collect();
+    known.insert(kept.match_key.clone());
+    let mut keys = Database::extra_match_keys_with_connection(conn, series_id)?;
+    keys.push(merged.match_key.clone());
+    for match_key in keys {
+        if known.insert(match_key.clone()) {
+            Database::insert_with_connection(
+                conn,
+                &SeriesMatchKey {
+                    series_id: into_id,
+                    match_key,
+                },
+            )?;
+        }
+    }
+    Ok(())
 }
 
 /// The series shows the cover of one of its books. A book of another series, or one without a
@@ -748,6 +860,234 @@ mod tests {
             again,
             Err(AppErrors::Database(DatabaseError::EntryNotFound))
         ));
+    }
+
+    /// A series row with these fields; answers its id.
+    fn add_full_series(
+        temp: &TempDatabase,
+        description: Option<&str>,
+        cover: Option<&str>,
+        years: (Option<i64>, Option<i64>),
+    ) -> i64 {
+        temp.db
+            .setup_new_transaction(|conn| {
+                conn.execute(
+                    "INSERT INTO series (name, description, cover_image, start_release_year, \
+                     end_release_year) VALUES ('Hellboy', ?1, ?2, ?3, ?4)",
+                    rusqlite::params![description, cover, years.0, years.1],
+                )
+                .unwrap();
+                Ok(conn.last_insert_rowid())
+            })
+            .unwrap()
+    }
+
+    /// A series row found by `key` and by each of `extra_keys`; answers its id.
+    fn add_keyed_series(temp: &TempDatabase, key: &str, extra_keys: &[&str]) -> i64 {
+        temp.db
+            .setup_new_transaction(|conn| {
+                conn.execute(
+                    "INSERT INTO series (name, match_key) VALUES (?1, ?1)",
+                    [key],
+                )
+                .unwrap();
+                let id = conn.last_insert_rowid();
+                for extra in extra_keys {
+                    conn.execute(
+                        "INSERT INTO series_match_keys (series_id, match_key) VALUES (?1, ?2)",
+                        rusqlite::params![id, extra],
+                    )
+                    .unwrap();
+                }
+                Ok(id)
+            })
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_merge_moves_books_libraries_and_reading_modes_and_deletes_the_merged_series() {
+        let temp = TempDatabase::open();
+        let manga = create_library(temp.db.clone(), new_library("Manga"))
+            .await
+            .unwrap()
+            .id;
+        let favourites = create_library(temp.db.clone(), new_library("Favourites"))
+            .await
+            .unwrap()
+            .id;
+        let merged = add_series_row(&temp, "hellboybprd");
+        let kept = add_series_row(&temp, "Hellboy BPRD");
+        add_book_row(&temp, merged, "/books/lower/v10.cbz");
+        add_book_row(&temp, merged, "/books/lower/v11.cbz");
+        add_book_row(&temp, kept, "/books/upper/v10.cbz");
+        for (library, series_id) in [(manga, merged), (favourites, merged), (favourites, kept)] {
+            add_series(temp.db.clone(), library, series_id)
+                .await
+                .unwrap();
+        }
+        let (alice, bob) = temp
+            .db
+            .setup_new_transaction(|conn| {
+                let alice = crate::test_support::insert_user(conn, "alice");
+                let bob = crate::test_support::insert_user(conn, "bob");
+                for (user_id, series_id, mode) in [
+                    (alice, merged, "rtl"),
+                    (bob, merged, "rtl"),
+                    (bob, kept, "ltr"),
+                ] {
+                    conn.execute(
+                        "INSERT INTO reading_modes (user_id, series_id, mode) VALUES (?1, ?2, ?3)",
+                        rusqlite::params![user_id, series_id, mode],
+                    )
+                    .unwrap();
+                }
+                Ok((alice, bob))
+            })
+            .unwrap();
+
+        let answer = merge_series(temp.db.clone(), kept, merged).await.unwrap();
+
+        assert_eq!(answer.id, kept);
+        assert_eq!(answer.data.name, "Hellboy BPRD");
+        assert_eq!(answer.data.book_count, 3);
+        assert_eq!(temp.db.get_books_in_series(kept).unwrap().len(), 3);
+        assert!(matches!(
+            temp.db.get_entry::<BookSeriesMetadata>(merged),
+            Err(DatabaseError::EntryNotFound)
+        ));
+        assert_eq!(linked_libraries(&temp, kept), [manga, favourites]);
+        assert_eq!(linked_libraries(&temp, merged), Vec::<i64>::new());
+        let modes: Vec<(i64, i64, String)> = temp
+            .db
+            .setup_new_transaction(|conn| {
+                Ok(conn
+                    .prepare(
+                        "SELECT user_id, series_id, mode FROM reading_modes \
+                         ORDER BY user_id, series_id",
+                    )
+                    .unwrap()
+                    .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+                    .unwrap()
+                    .collect::<Result<_, _>>()
+                    .unwrap())
+            })
+            .unwrap();
+        assert_eq!(
+            modes,
+            [
+                (alice, kept, "rtl".to_string()),
+                (bob, kept, "ltr".to_string()),
+            ],
+            "alice's mode moved over; bob's own choice for the kept series stayed"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_merge_keeps_the_kept_series_fields_and_fills_only_its_empty_ones() {
+        let temp = TempDatabase::open();
+        let without_years = add_full_series(&temp, None, Some("kept.png"), (None, None));
+        let started = add_full_series(&temp, Some("Kept text"), None, (Some(2000), None));
+        for kept in [without_years, started] {
+            let merged = add_full_series(
+                &temp,
+                Some("Dark fantasy"),
+                Some("merged.png"),
+                (Some(1989), Some(2021)),
+            );
+            temp.db
+                .setup_new_transaction(|conn| {
+                    conn.execute("UPDATE series SET name = 'hellboy' WHERE id = ?1", [merged])
+                        .unwrap();
+                    Ok(())
+                })
+                .unwrap();
+            merge_series(temp.db.clone(), kept, merged).await.unwrap();
+        }
+        let stored = |id| {
+            let series = temp.db.get_entry::<BookSeriesMetadata>(id).unwrap();
+            (
+                series.name,
+                series.description,
+                series.cover_image,
+                series.start_release_year,
+                series.end_release_year,
+            )
+        };
+
+        assert_eq!(
+            stored(without_years),
+            (
+                "Hellboy".to_string(),
+                Some("Dark fantasy".to_string()),
+                Some("kept.png".to_string()),
+                Some(1989),
+                Some(2021)
+            )
+        );
+        assert_eq!(
+            stored(started),
+            (
+                "Hellboy".to_string(),
+                Some("Kept text".to_string()),
+                Some("merged.png".to_string()),
+                Some(2000),
+                None
+            ),
+            "years move only as a pair"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_merge_gives_the_kept_series_each_key_of_the_merged_one_once() {
+        let temp = TempDatabase::open();
+        let kept = add_keyed_series(&temp, "hellboy bprd", &["hellboybprd"]);
+        let merged = add_keyed_series(&temp, "hellboybprd", &["hellboy-bprd", "hellboy bprd"]);
+
+        merge_series(temp.db.clone(), kept, merged).await.unwrap();
+
+        let keys = |series_id| {
+            temp.db
+                .setup_new_transaction(|conn| {
+                    Ok(Database::extra_match_keys_with_connection(conn, series_id)?)
+                })
+                .unwrap()
+        };
+        assert_eq!(
+            keys(kept),
+            ["hellboy-bprd", "hellboybprd"],
+            "neither its own key nor one it had twice"
+        );
+        assert_eq!(keys(merged), Vec::<String>::new());
+        let stored = temp.db.get_entry::<BookSeriesMetadata>(kept).unwrap();
+        assert_eq!(stored.match_key, "hellboy bprd");
+    }
+
+    #[tokio::test]
+    async fn merging_a_series_into_itself_or_with_an_unknown_one_is_refused() {
+        let temp = TempDatabase::open();
+        let kept = add_series_row(&temp, "Berserk");
+        let merged = add_series_row(&temp, "berserk");
+        add_book_row(&temp, merged, "/books/Berserk v01.cbz");
+
+        let itself = merge_series(temp.db.clone(), merged, merged).await;
+        assert!(matches!(itself, Err(AppErrors::InvalidRequest)));
+        for (into_id, series_id) in [(kept, merged + 100), (kept + 100, merged)] {
+            let unknown = merge_series(temp.db.clone(), into_id, series_id).await;
+            assert!(
+                matches!(
+                    unknown,
+                    Err(AppErrors::Database(DatabaseError::EntryNotFound))
+                ),
+                "into {into_id}, merging {series_id}"
+            );
+        }
+
+        assert_eq!(
+            temp.db.get_books_in_series(merged).unwrap().len(),
+            1,
+            "a refused merge changes nothing"
+        );
+        assert!(temp.db.get_entry::<BookSeriesMetadata>(kept).is_ok());
     }
 
     #[tokio::test]
