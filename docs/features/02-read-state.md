@@ -6,8 +6,8 @@ Each user's place in each book — where they got to, and whether they finished 
 client can resume, show progress, list what the user is in the middle of, and mark what's done.
 
 ## Build
-- [ ] 2 h · Migration `0010`: `reading_progress` keyed by `(user_id, book_id)` — `position` and `total` (the reader's page, or a flowing EPUB's block, from 0, out of the count the reader counted; both NULL for a book marked read by hand before it was opened), `finished`, `last_read_at` — with foreign keys to `users` and `books`, `ON DELETE CASCADE`; dedicated functions in `db_reading_progress.rs`; never `books.page_number`, which is parsed from the file name [DB]
-- [ ] 1 h · Save in one upsert — `INSERT … ON CONFLICT (user_id, book_id) DO UPDATE` — keeping the fields a change leaves out; `last_read_at` is set only by a position [BE]
+- [x] 2 h · Migration `0010`: `reading_progress` keyed by `(user_id, book_id)` — `position` and `total` (the reader's page, or a flowing EPUB's block, from 0, out of the count the reader counted; both NULL for a book marked read by hand before it was opened), `finished`, `last_read_at` — with foreign keys to `users` and `books`, `ON DELETE CASCADE`; dedicated functions in `db_reading_progress.rs`; never `books.page_number`, which is parsed from the file name [DB]
+- [x] 1 h · Save in one upsert — `INSERT … ON CONFLICT (user_id, book_id) DO UPDATE` — keeping the fields a change leaves out; `last_read_at` is set only by a position [BE]
 - [ ] 2 h · `GET` and `PATCH /books/{id}/progress` with `{"position", "total", "finished"?}`, the user from the session; 400 for an empty body, or a position without its total or outside `0..total` [BE]
 - [ ] 2 h · `GET /books/{id}` and `GET /series/{id}/books` carry the caller's `progress`; `GET /libraries/{id}/series` carries `finished_count` — one grouped query per list [BE]
 - [ ] 2 h · App: parse the progress, and save it through `PATCH` once the position rests 2 s and when the reader closes [FE]

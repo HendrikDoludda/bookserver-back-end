@@ -75,6 +75,12 @@ const MIGRATIONS: &[Migration] = &[
         sql: include_str!("../../migrations/0009_series_match_keys.sql"),
         step: None,
     },
+    Migration {
+        version: 10,
+        name: "reading_progress",
+        sql: include_str!("../../migrations/0010_reading_progress.sql"),
+        step: None,
+    },
 ];
 
 /// Migration 8: every series' match key composed (NFC), as the scanner now builds its keys.
@@ -1367,5 +1373,63 @@ mod tests {
             .collect::<Result<_, _>>()
             .unwrap();
         assert_eq!(left, [(monster, "berserk deluxe".to_string())]);
+    }
+
+    #[test]
+    fn a_reading_progress_row_holds_a_whole_place_and_goes_with_its_user_or_book() {
+        let conn = memory_connection();
+        let alice = insert_user(&conn, "alice");
+        let bob = insert_user(&conn, "bob");
+        let berserk = insert_series(&conn, "berserk");
+        let first = insert_full_book(&conn, "/books/Berserk v01.cbz", Some(berserk)).unwrap();
+        let second = insert_full_book(&conn, "/books/Berserk v02.cbz", Some(berserk)).unwrap();
+        let add = |user_id: i64,
+                   book_id: i64,
+                   position: Option<i64>,
+                   total: Option<i64>,
+                   finished: i64| {
+            conn.execute(
+                "INSERT INTO reading_progress (user_id, book_id, position, total, finished) \
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![user_id, book_id, position, total, finished],
+            )
+        };
+
+        for (position, total, finished, why) in [
+            (Some(3), None, 0, "a position needs its total"),
+            (None, Some(10), 0, "a total needs its position"),
+            (Some(10), Some(10), 0, "the position lies before the total"),
+            (Some(-1), Some(10), 0, "the position counts from 0"),
+            (Some(3), Some(10), 2, "finished is 0 or 1"),
+        ] {
+            assert!(
+                add(alice, first, position, total, finished).is_err(),
+                "{why}"
+            );
+        }
+        add(alice, first, Some(3), Some(10), 0).unwrap();
+        add(alice, second, None, None, 1).unwrap();
+        add(bob, first, Some(0), Some(1), 1).unwrap();
+        assert!(
+            add(alice, first, Some(4), Some(10), 0).is_err(),
+            "one row per user and book"
+        );
+        assert!(
+            add(alice, second + 1, None, None, 1).is_err(),
+            "only a book that exists"
+        );
+
+        conn.execute("DELETE FROM users WHERE id = ?1", [bob])
+            .unwrap();
+        conn.execute("DELETE FROM books WHERE id = ?1", [second])
+            .unwrap();
+        let left: Vec<(i64, i64)> = conn
+            .prepare("SELECT user_id, book_id FROM reading_progress ORDER BY user_id, book_id")
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(left, [(alice, first)]);
     }
 }

@@ -31,6 +31,7 @@ pub enum DatabaseTypes {
     ReadingModes,
     Directories,
     SeriesMatchKeys,
+    ReadingProgress,
 }
 
 impl DatabaseTypes {
@@ -52,11 +53,13 @@ impl DatabaseTypes {
             DatabaseTypes::ReadingModes => "reading_modes",
             DatabaseTypes::Directories => "directories",
             DatabaseTypes::SeriesMatchKeys => "series_match_keys",
+            DatabaseTypes::ReadingProgress => "reading_progress",
         }
     }
 
     /// The column a row is identified by; `None` for `library_elements`, `translations`,
-    /// `reading_modes` and `series_match_keys`, whose rows are identified by two columns.
+    /// `reading_modes`, `series_match_keys` and `reading_progress`, whose rows are identified by
+    /// two columns.
     pub fn get_key_column(&self) -> Option<&str> {
         match self {
             DatabaseTypes::Books
@@ -68,7 +71,8 @@ impl DatabaseTypes {
             DatabaseTypes::LibraryElements
             | DatabaseTypes::Translations
             | DatabaseTypes::ReadingModes
-            | DatabaseTypes::SeriesMatchKeys => None,
+            | DatabaseTypes::SeriesMatchKeys
+            | DatabaseTypes::ReadingProgress => None,
             DatabaseTypes::Locales => Some("code"),
             DatabaseTypes::Totp | DatabaseTypes::UserSettings => Some("user_id"),
             DatabaseTypes::Session => Some("session_id"),
@@ -260,6 +264,23 @@ impl From<ReadingDirection> for ReadingMode {
             ReadingDirection::Ltr => ReadingMode::Ltr,
         }
     }
+}
+
+/// A user's progress in a book: their place, as its reader counts it — a page, or a flowing EPUB's
+/// block, from 0 — out of `total`, and whether they finished it. Without a place for a book they
+/// never opened, or only marked by hand.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+pub struct ReadingProgress {
+    pub position: Option<i64>,
+    pub total: Option<i64>,
+    pub finished: bool,
+}
+
+/// A place in a book: `position`, from 0, of the `total` its reader counts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Place {
+    pub position: i64,
+    pub total: i64,
 }
 
 // === Book metadata model =====================================================

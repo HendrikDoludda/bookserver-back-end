@@ -885,7 +885,7 @@ pub fn convert_system_time_to_unix_time(time: SystemTime) -> i64 {
 }
 
 /// Reads the `(id, count)` rows of a `GROUP BY` query into a map from id to count.
-fn counts_by_id(
+pub(crate) fn counts_by_id(
     conn: &Connection,
     query: &str,
     params: impl rusqlite::Params,
