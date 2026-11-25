@@ -922,6 +922,9 @@ mod tests {
         let berserk = scanned_series(&temp, "Berserk");
         scanned_book(&temp, berserk, &file.to_string_lossy());
         let mut state = temp.state(Mailer::Disabled);
+        // No worker: the scan adding the folder asks for would otherwise move the fixture's book
+        // into a series of its own while the test reads the library.
+        state.scans = crate::scanner::scan_jobs::ScanJobs::without_worker();
         state.watch = FolderWatch::start(state.scans.clone(), []);
         let watch = state.watch.clone();
         let app = set_up_routes().with_state(state);
