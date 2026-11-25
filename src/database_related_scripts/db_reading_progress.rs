@@ -150,6 +150,24 @@ pub fn finished_per_series_in_library(
     )
 }
 
+/// How many books of each library the user finished, by library id — a book whose series is in
+/// two libraries counts in both; a library they finished none of is absent.
+pub fn finished_per_library(
+    conn: &Connection,
+    user_id: i64,
+) -> Result<HashMap<i64, i64>, DatabaseError> {
+    counts_by_id(
+        conn,
+        "SELECT library_elements.library_id, COUNT(*) FROM reading_progress \
+         JOIN books ON books.id = reading_progress.book_id \
+         JOIN library_elements ON library_elements.series_id = books.series \
+         WHERE reading_progress.user_id = ?1 AND reading_progress.finished = 1 \
+         GROUP BY library_elements.library_id",
+        params![user_id],
+        "reading_progress",
+    )
+}
+
 fn progress_of_row(row: &Row) -> rusqlite::Result<ReadingProgress> {
     Ok(ReadingProgress {
         position: row.get("position")?,
@@ -348,6 +366,49 @@ mod tests {
                 total: Some(10),
                 finished: false,
             }
+        );
+    }
+
+    #[test]
+    fn finished_books_are_counted_per_library_for_this_user_only() {
+        let conn = memory_connection();
+        let alice = insert_user(&conn, "alice");
+        let bob = insert_user(&conn, "bob");
+        conn.execute(
+            "INSERT INTO library (library_name, library_type) VALUES ('Manga', 'comics'), \
+             ('Other', 'comics'), ('Empty', 'comics')",
+            [],
+        )
+        .unwrap();
+        let (manga, other, empty) = (1, 2, 3);
+        let berserk = insert_series(&conn, "Berserk");
+        let monster = insert_series(&conn, "Monster");
+        for (library, series) in [(manga, berserk), (other, berserk), (other, monster)] {
+            conn.execute(
+                "INSERT INTO library_elements (library_id, series_id) VALUES (?1, ?2)",
+                [library, series],
+            )
+            .unwrap();
+        }
+        let first = insert_book(&conn, berserk, "/books/Berserk v01.cbz");
+        let second = insert_book(&conn, berserk, "/books/Berserk v02.cbz");
+        let monster_book = insert_book(&conn, monster, "/books/Monster v01.cbz");
+        save(&conn, alice, first, None, Some(true), 1).unwrap();
+        save(&conn, alice, second, place(1, 10), None, 1).unwrap();
+        save(&conn, alice, monster_book, None, Some(true), 1).unwrap();
+        save(&conn, bob, second, None, Some(true), 1).unwrap();
+
+        let alices = finished_per_library(&conn, alice).unwrap();
+
+        assert_eq!(
+            alices,
+            HashMap::from([(manga, 1), (other, 2)]),
+            "Berserk's finished book counts in both of its libraries; the unfinished one in none"
+        );
+        assert_eq!(alices.get(&empty), None);
+        assert_eq!(
+            finished_per_library(&conn, bob).unwrap(),
+            HashMap::from([(manga, 1), (other, 1)])
         );
     }
 

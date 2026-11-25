@@ -29,6 +29,16 @@ impl LibrarySummary {
     }
 }
 
+/// One library as `GET /libraries` lists it: its summary, how many books its series hold, and how
+/// many of them the calling user finished.
+#[derive(Debug, Serialize)]
+pub struct LibraryOverview {
+    #[serde(flatten)]
+    pub library: LibrarySummary,
+    pub book_count: i64,
+    pub finished_count: i64,
+}
+
 /// One series as a library's series list sends it, and how many books it holds — never its
 /// stored cover path: covers are reached through `GET /covers/series/{id}`.
 #[derive(Debug, Serialize)]

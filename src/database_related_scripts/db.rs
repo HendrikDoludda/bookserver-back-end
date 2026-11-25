@@ -532,6 +532,21 @@ impl Database {
         )
     }
 
+    /// How many books each library holds through its series, by library id — a book whose series
+    /// is in two libraries counts in both; a library without books is absent.
+    pub fn count_books_per_library_with_connection(
+        conn: &Connection,
+    ) -> Result<HashMap<i64, i64>, DatabaseError> {
+        counts_by_id(
+            conn,
+            "SELECT library_elements.library_id, COUNT(*) FROM books \
+             JOIN library_elements ON library_elements.series_id = books.series \
+             GROUP BY library_elements.library_id",
+            rusqlite::params![],
+            "books",
+        )
+    }
+
     /// How many books each series of a library holds, by series id; a series without books is
     /// absent.
     pub fn count_books_per_series_in_library_with_connection(
@@ -1239,6 +1254,38 @@ mod tests {
             counts.get(&empty),
             None,
             "a library without series is absent"
+        );
+    }
+
+    #[test]
+    fn each_library_counts_the_books_of_its_series() {
+        let conn = memory_connection();
+        let manga = insert_library(&conn, "manga");
+        let comics = insert_library(&conn, "comics");
+        let empty = insert_library(&conn, "empty");
+        let one = insert_series(&conn, "one");
+        let shared = insert_series(&conn, "shared");
+        let unlinked = insert_series(&conn, "unlinked");
+        for (library, series) in [(manga, one), (manga, shared), (comics, shared)] {
+            link(&conn, library, series);
+        }
+        for volume in 1..=2 {
+            insert_book(&conn, one, "One", Some(volume), None);
+        }
+        insert_book(&conn, shared, "Shared", Some(1), None);
+        insert_book(&conn, unlinked, "Unlinked", Some(1), None);
+
+        let counts = Database::count_books_per_library_with_connection(&conn).unwrap();
+
+        assert_eq!(
+            counts,
+            HashMap::from([(manga, 3), (comics, 1)]),
+            "the shared series' book counts in both"
+        );
+        assert_eq!(
+            counts.get(&empty),
+            None,
+            "a library without books is absent"
         );
     }
 

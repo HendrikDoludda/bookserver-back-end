@@ -15,8 +15,8 @@ use axum::{
 use crate::{
     book_pages::{self, PageContent},
     data_models::books_model::{
-        BookDetails, BookSummary, LibraryChanges, LibraryCoverChoice, LibrarySeries,
-        LibrarySummary, NewLibrary, PageSummary, ProgressChange, ReadingModeChange,
+        BookDetails, BookSummary, LibraryChanges, LibraryCoverChoice, LibraryOverview,
+        LibrarySeries, LibrarySummary, NewLibrary, PageSummary, ProgressChange, ReadingModeChange,
         ReadingModeSetting, SeriesBook, SeriesChanges, SeriesCoverChoice, SeriesListing,
         SeriesMerge, SeriesSummary, StartedBook,
     },
@@ -37,23 +37,32 @@ use super::extractors::{AdminSession, AuthSession, JsonBody, PathParams};
 
 // === Library, series & book handlers =========================================
 
-/// Return every library with its number of series, each paired with its row id.
+/// Return every library with its number of series and of books, and how many of those books the
+/// calling user finished, each paired with its row id.
 pub async fn get_libraries(
-    _session: AuthSession,
+    session: AuthSession,
     State(db): State<Arc<Database>>,
-) -> Result<Json<Vec<WithId<LibrarySummary>>>, AppErrors> {
+) -> Result<Json<Vec<WithId<LibraryOverview>>>, AppErrors> {
+    let user_id = session.0.user_id;
     let libraries = db
-        .read(|conn| {
+        .read(move |conn| {
             let libraries = Database::get_all_entries_with_connection::<LibraryMetadata>(conn)?;
             let series_counts = Database::count_series_per_library_with_connection(conn)?;
+            let book_counts = Database::count_books_per_library_with_connection(conn)?;
+            let finished_counts = db_reading_progress::finished_per_library(conn, user_id)?;
+            let count = |counts: &HashMap<i64, i64>, id| counts.get(&id).copied().unwrap_or(0);
             Ok(libraries
                 .into_iter()
                 .map(|library| WithId {
                     id: library.id,
-                    data: LibrarySummary::new(
-                        library.data,
-                        series_counts.get(&library.id).copied().unwrap_or(0),
-                    ),
+                    data: LibraryOverview {
+                        book_count: count(&book_counts, library.id),
+                        finished_count: count(&finished_counts, library.id),
+                        library: LibrarySummary::new(
+                            library.data,
+                            count(&series_counts, library.id),
+                        ),
+                    },
                 })
                 .collect::<Vec<_>>())
         })

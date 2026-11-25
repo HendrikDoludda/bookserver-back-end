@@ -397,6 +397,8 @@ mod tests {
                 "library_type": "books",
                 "description": null,
                 "series_count": 1,
+                "book_count": 0,
+                "finished_count": 0,
             }])
         );
 
@@ -1029,6 +1031,8 @@ mod tests {
                 "library_type": "comics",
                 "description": null,
                 "series_count": 1,
+                "book_count": 1,
+                "finished_count": 0,
             }]),
             "the stored book's series joined the folder's library"
         );
@@ -1339,6 +1343,67 @@ mod tests {
                 "progress": { "position": null, "total": null, "finished": false },
             })
         );
+    }
+
+    #[tokio::test]
+    async fn the_libraries_count_their_books_and_the_callers_finished_ones() {
+        let temp = TempDatabase::open();
+        let alice = logged_in(&temp, "alice", "member");
+        let bob = logged_in(&temp, "bob", "member");
+        let library = temp
+            .db
+            .setup_new_transaction(|conn| {
+                conn.execute(
+                    "INSERT INTO library (library_name, library_type) VALUES ('Manga', 'comics')",
+                    [],
+                )
+                .unwrap();
+                let library = conn.last_insert_rowid();
+                conn.execute("INSERT INTO series (name) VALUES ('Berserk')", [])
+                    .unwrap();
+                let series = conn.last_insert_rowid();
+                conn.execute(
+                    "INSERT INTO library_elements (library_id, series_id) VALUES (?1, ?2)",
+                    [library, series],
+                )
+                .unwrap();
+                let mut books = Vec::new();
+                for volume in 1..=3 {
+                    conn.execute(
+                        "INSERT INTO books (title, author, format, language, tags, file_path, \
+                         volume_number, series) \
+                         VALUES ('Berserk', 'Kentaro Miura', 'cbz', 'ja', '', ?1, ?2, ?3)",
+                        rusqlite::params![format!("/books/Berserk v{volume}.cbz"), volume, series],
+                    )
+                    .unwrap();
+                    books.push(conn.last_insert_rowid());
+                }
+                let alice_id: i64 = conn
+                    .query_row("SELECT id FROM users WHERE username = 'alice'", [], |row| {
+                        row.get(0)
+                    })
+                    .unwrap();
+                conn.execute(
+                    "INSERT INTO reading_progress (user_id, book_id, finished) \
+                     VALUES (?1, ?2, 1), (?1, ?3, 1)",
+                    [alice_id, books[0], books[1]],
+                )
+                .unwrap();
+                Ok(library)
+            })
+            .unwrap();
+        let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
+
+        for (token, finished) in [(&alice, 2), (&bob, 0)] {
+            let (_, _, body) =
+                call(&app, authorized("GET", "/api/v1/libraries", token, None)).await;
+            let listed = &json(&body)[0];
+            assert_eq!(listed["id"], library);
+            assert_eq!(
+                (&listed["book_count"], &listed["finished_count"]),
+                (&3.into(), &finished.into())
+            );
+        }
     }
 
     #[tokio::test]
