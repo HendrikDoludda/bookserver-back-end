@@ -57,6 +57,11 @@ static TRAILING_NUMBER_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"\s(\d{1,3}
 static TAG_REGEX: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"\[[^\]]*\]|\([^)]*\)|\{[^}]*\}").unwrap());
 
+// `v`, `c`, `p` and `book` also end ordinary words — `bleach12`, `notebook2` — so only the long
+// markers are cut out of a run-together name.
+static RUN_TOGETHER_MARKER_REGEX: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)(?:volume|vol|chapter)\d").unwrap());
+
 /// Scans the directories `scope` reads and answers what it did, once its last book is written.
 /// `progress` hears how many books the walk found, then how far the scan got after each book.
 /// `heartbeat` hears every step; once the worker gives up on the scan, it writes nothing more.
@@ -1029,8 +1034,10 @@ fn is_run_together(name: &str) -> bool {
         .contains(|c: char| c.is_whitespace() || c == '-')
 }
 
-/// `name` with a space before every character that [`starts_word`].
+/// `name` with a space before each `volume`, `vol` or `chapter` that a number follows, and before
+/// every character that [`starts_word`].
 fn split_run_together(name: &str) -> String {
+    let name = RUN_TOGETHER_MARKER_REGEX.replace_all(name, " $0");
     let mut split = String::with_capacity(name.len() + 8);
     let mut chars = name.chars().peekable();
     let mut before = None;
@@ -1500,6 +1507,36 @@ mod tests {
         assert_eq!(
             title_and_volume(&temp.db, &books[1]),
             ("Hellboy BPRD".to_string(), Some(11))
+        );
+    }
+
+    #[test]
+    fn lowercase_volumes_named_without_separators_join_one_series() {
+        let dir = TempDir::new();
+        let temp = TempDatabase::open();
+        let directory = add_directory(&temp.db, dir.path(), None);
+
+        let books = scan_books(
+            &dir,
+            &temp.db,
+            directory,
+            &[
+                "hellboybprdvolume10title.cbz",
+                "hellboybprdvolume11title.cbz",
+            ],
+        );
+
+        assert_eq!(
+            series_rows(&temp.db),
+            [("hellboybprd".to_string(), "hellboybprd".to_string())]
+        );
+        assert_eq!(
+            title_and_volume(&temp.db, &books[0]),
+            ("hellboybprd".to_string(), Some(10))
+        );
+        assert_eq!(
+            title_and_volume(&temp.db, &books[1]),
+            ("hellboybprd".to_string(), Some(11))
         );
     }
 
@@ -2266,6 +2303,20 @@ mod tests {
             ("進撃の巨人1", "進撃の巨人1", None, None, None),
             // One separator, and the name is left as written.
             ("Hellboy BPRDVol2", "Hellboy BPRDVol2", None, None, None),
+            // In one without capitals, only a long marker followed by a number is cut out.
+            (
+                "hellboybprdvolume10title",
+                "hellboybprd",
+                Some(10),
+                None,
+                None,
+            ),
+            ("hellboyvol3", "hellboy", Some(3), None, None),
+            ("onepiecechapter12", "onepiece", None, Some(12.0), None),
+            ("HELLBOYVOLUME10", "HELLBOY", Some(10), None, None),
+            ("bleach12", "bleach", Some(12), None, None),
+            ("notebook2", "notebook", Some(2), None, None),
+            ("revolver", "revolver", None, None, None),
         ] {
             let parsed = parse_name(name);
             assert_eq!(
