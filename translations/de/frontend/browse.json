@@ -5,6 +5,10 @@
   },
   "books_empty": "In dieser Reihe gibt es noch keine Bücher.",
   "chapter": "Kapitel {number}",
+  "finished": "Gelesen",
+  "mark_not_saved": "Das Buch konnte nicht markiert werden.",
+  "mark_read": "Als gelesen markieren",
+  "mark_unread": "Als ungelesen markieren",
   "reload": "Neu laden",
   "series_count": {
     "one": "{count} Reihe",

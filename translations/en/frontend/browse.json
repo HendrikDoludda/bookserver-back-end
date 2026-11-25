@@ -7,6 +7,12 @@
   "books_empty": "No books in this series yet.",
   "chapter": "Chapter {number}",
   "@chapter": "A book's label in a series' list; {number} is its chapter number.",
+  "finished": "Read",
+  "@finished": "Read aloud for the check on the cover of a book, or a series, the user has finished.",
+  "mark_not_saved": "The book couldn't be marked.",
+  "mark_read": "Mark as read",
+  "@mark_read": "In the menu a long press on a book's cover opens.",
+  "mark_unread": "Mark as unread",
   "reload": "Reload",
   "series_count": {
     "one": "{count} series",
