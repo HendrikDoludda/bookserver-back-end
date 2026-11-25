@@ -13,7 +13,7 @@ comment has text, a highlight doesn't.
 - [ ] ? h · Reader UI: highlight a selection or region, attach a comment, show existing annotations, delete one [FE]
 
 ## Open decisions
-- [ ] What is the anchor? — blocks: the schema. Suggested: page index plus a normalized rectangle, stored as one opaque locator string the backend never interprets — the same shape the [reading position](41-reading-position.md) settles on, so there is one locator design, not two.
+- [ ] What is the anchor? — blocks: the schema. Suggested: page index plus a normalized rectangle — the page counted from 0, as [read state](02-read-state.md) stores a PDF's place.
 - [ ] Annotations in the database, or written into the PDF? — blocks: the schema. Suggested: database rows only — the file stays byte-identical, so `file_hash` and `last_modified` don't change and a re-scan sees nothing.
 - [ ] Private to the owner, or shareable? — blocks: the endpoints. Suggested: private only; revisit if someone asks.
 - [ ] Should the server check a page index against the book's page count? `books.page_count` is NULL for every book today — blocks: the endpoints. Suggested: accept the client's page unvalidated until the scanner fills `page_count`.

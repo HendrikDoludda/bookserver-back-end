@@ -3,11 +3,10 @@
 | Feature | Tier | State | Doc |
 |---|---|---|---|
 | Flutter app | F1 | in progress | [73-flutter-app](features/73-flutter-app.md) |
-| Read state | 3 | not started | [02-read-state](features/02-read-state.md) |
+| Read state | 3 | in progress | [02-read-state](features/02-read-state.md) |
 | Metadata enrichment | 3 | not started | [09-metadata-enrichment](features/09-metadata-enrichment.md) |
 | Search | 3 | not started | [11-search](features/11-search.md) |
 | Plan to read | 3 | not started | [40-plan-to-read](features/40-plan-to-read.md) |
-| Reading position format | 3 | not started | [41-reading-position](features/41-reading-position.md) |
 | Sorting, filtering, paging & A–Z bar | 3 | not started | [42-sorting-filtering-and-paging](features/42-sorting-filtering-and-paging.md) |
 | Book metadata | 3 | not started | [63-book-metadata](features/63-book-metadata.md) |
 | Manga metadata | 3 | not started | [64-manga-metadata](features/64-manga-metadata.md) |
