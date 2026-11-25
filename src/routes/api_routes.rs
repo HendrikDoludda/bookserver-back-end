@@ -23,9 +23,9 @@ use crate::{
         library::{
             add_library, add_series_to_library, choose_library_cover, choose_series_cover,
             delete_library, delete_series, get_cover, get_libraries, get_page, get_pages,
-            get_series_children, get_series_in_library, list_series, remove_series_from_library,
-            request_file, reset_library_cover, reset_series_cover, retrieve_metadata,
-            set_reading_mode, update_library, update_series,
+            get_series_children, get_series_in_library, list_series, merge_series,
+            remove_series_from_library, request_file, reset_library_cover, reset_series_cover,
+            retrieve_metadata, set_reading_mode, update_library, update_series,
         },
         locales::{get_translations, list_locales},
         scans::{scan_all_directories, scan_directory, scan_status},
@@ -75,6 +75,7 @@ pub fn set_up_routes() -> Router<AppState> {
         .route("/series", get(list_series))
         .route("/series/{id}", patch(update_series).delete(delete_series))
         .route("/series/{id}/books", get(get_series_children))
+        .route("/series/{id}/merges", post(merge_series))
         .route(
             "/series/{id}/cover",
             put(choose_series_cover).delete(reset_series_cover),
@@ -648,6 +649,11 @@ mod tests {
                 Some(serde_json::json!({ "name": "Mine" })),
             ),
             ("DELETE", format!("/api/v1/series/{berserk}"), None),
+            (
+                "POST",
+                format!("/api/v1/series/{berserk}/merges"),
+                Some(serde_json::json!({ "series_id": berserk + 1 })),
+            ),
         ] {
             let (status, _, answer) = call(&app, authorized(method, &uri, &member, body)).await;
             assert_eq!(status, StatusCode::FORBIDDEN, "{method} {uri}");
@@ -760,6 +766,68 @@ mod tests {
             call(&app, authorized("DELETE", &monster_uri, &admin, None)).await;
         assert_eq!(status, StatusCode::NOT_FOUND);
         assert_eq!(json(&answer), serde_json::json!({ "error": "not_found" }));
+    }
+
+    #[tokio::test]
+    async fn an_admin_merges_a_series_into_another_over_http() {
+        let temp = TempDatabase::open();
+        let admin = logged_in(&temp, "alice", "admin");
+        let kept = scanned_series(&temp, "Hellboy BPRD");
+        let merged = scanned_series(&temp, "hellboybprd");
+        scanned_book(&temp, kept, "/books/upper/v10.cbz");
+        scanned_book(&temp, merged, "/books/lower/v10.cbz");
+        scanned_book(&temp, merged, "/books/lower/v11.cbz");
+        let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
+        let merges = format!("/api/v1/series/{kept}/merges");
+
+        let body = serde_json::json!({ "series_id": merged });
+        let (status, _, answer) = call(&app, authorized("POST", &merges, &admin, Some(body))).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            json(&answer),
+            serde_json::json!({
+                "id": kept,
+                "name": "Hellboy BPRD",
+                "description": null,
+                "start_release_year": null,
+                "end_release_year": null,
+                "book_count": 3,
+            })
+        );
+        let (_, _, listed) = call(&app, authorized("GET", "/api/v1/series", &admin, None)).await;
+        let ids: Vec<i64> = json(&listed)
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|one| one["id"].as_i64().unwrap())
+            .collect();
+        assert_eq!(ids, [kept], "the merged series is gone");
+
+        for (body, status, key) in [
+            (
+                serde_json::json!({ "series_id": kept }),
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
+            ),
+            (
+                serde_json::json!({ "series_id": merged }),
+                StatusCode::NOT_FOUND,
+                "not_found",
+            ),
+            (
+                serde_json::json!({}),
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
+            ),
+        ] {
+            let (answered, _, answer) = call(
+                &app,
+                authorized("POST", &merges, &admin, Some(body.clone())),
+            )
+            .await;
+            assert_eq!(answered, status, "{body}");
+            assert_eq!(json(&answer), serde_json::json!({ "error": key }), "{body}");
+        }
     }
 
     #[tokio::test]
@@ -2720,6 +2788,7 @@ mod tests {
         ("PATCH", "/api/v1/series/1"),
         ("DELETE", "/api/v1/series/1"),
         ("GET", "/api/v1/series/1/books"),
+        ("POST", "/api/v1/series/1/merges"),
         ("PUT", "/api/v1/series/1/cover"),
         ("DELETE", "/api/v1/series/1/cover"),
         ("PUT", "/api/v1/series/1/reading_mode"),

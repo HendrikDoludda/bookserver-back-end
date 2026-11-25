@@ -13,7 +13,7 @@ use crate::{
     data_models::books_model::{
         BookDetails, BookSummary, LibraryChanges, LibraryCoverChoice, LibrarySummary, NewLibrary,
         PageSummary, ReadingModeChange, ReadingModeSetting, SeriesChanges, SeriesCoverChoice,
-        SeriesListing, SeriesSummary,
+        SeriesListing, SeriesMerge, SeriesSummary,
     },
     db::Database,
     error_types::{AppErrors, DatabaseError, PageError},
@@ -271,6 +271,19 @@ pub async fn update_series(
 ) -> Result<Json<WithId<SeriesSummary>>, AppErrors> {
     Ok(Json(
         library_management::change_series(db, id, changes).await?,
+    ))
+}
+
+/// `POST /api/v1/series/{id}/merges` with `{"series_id"}`: merges that series into this one and
+/// answers this one as `PATCH /api/v1/series/{id}` does; 400 `invalid_request` for itself.
+pub async fn merge_series(
+    _admin: AdminSession,
+    State(db): State<Arc<Database>>,
+    PathParams(id): PathParams<i64>,
+    JsonBody(merge): JsonBody<SeriesMerge>,
+) -> Result<Json<WithId<SeriesSummary>>, AppErrors> {
+    Ok(Json(
+        library_management::merge_series(db, id, merge.series_id).await?,
     ))
 }
 

@@ -1,0 +1,1 @@
+- `src/routes/api_routes.rs` `an_admin_adds_a_folder_lists_it_and_removes_it_over_http` · failed once in a full router-test run, passes 6/6 on its own · it starts a real system folder watcher and asserts `"watching": true` at once — a flaky test hides real failures

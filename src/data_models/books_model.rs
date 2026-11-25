@@ -126,6 +126,12 @@ pub struct SeriesCoverChoice {
     pub book_id: i64,
 }
 
+/// `POST /api/v1/series/{id}/merges`: the series merged into it.
+#[derive(Debug, Deserialize)]
+pub struct SeriesMerge {
+    pub series_id: i64,
+}
+
 /// `PUT /api/v1/libraries/{id}/cover`: the series whose cover the library shows.
 #[derive(Debug, Deserialize)]
 pub struct LibraryCoverChoice {
