@@ -410,6 +410,7 @@ mod tests {
                 "start_release_year": null,
                 "end_release_year": null,
                 "book_count": 0,
+                "finished_count": 0,
             }])
         );
     }
@@ -1284,6 +1285,7 @@ mod tests {
                 "page_number": null,
                 "last_modified": null,
                 "file_size": null,
+                "progress": { "position": null, "total": null, "finished": false },
             }])
         );
     }
@@ -1332,8 +1334,92 @@ mod tests {
                 "last_modified": 1700000000,
                 "file_size": 1048576,
                 "reading_mode": "ltr",
+                "progress": { "position": null, "total": null, "finished": false },
             })
         );
+    }
+
+    #[tokio::test]
+    async fn the_lists_and_a_book_carry_the_callers_own_progress() {
+        let temp = TempDatabase::open();
+        let alice = logged_in(&temp, "alice", "member");
+        let bob = logged_in(&temp, "bob", "member");
+        let (library, series, first, second) = temp
+            .db
+            .setup_new_transaction(|conn| {
+                conn.execute(
+                    "INSERT INTO library (library_name, library_type) VALUES ('Manga', 'comics')",
+                    [],
+                )
+                .unwrap();
+                let library = conn.last_insert_rowid();
+                conn.execute("INSERT INTO series (name) VALUES ('Berserk')", [])
+                    .unwrap();
+                let series = conn.last_insert_rowid();
+                conn.execute(
+                    "INSERT INTO library_elements (library_id, series_id) VALUES (?1, ?2)",
+                    [library, series],
+                )
+                .unwrap();
+                let mut books = Vec::new();
+                for volume in 1..=2 {
+                    conn.execute(
+                        "INSERT INTO books (title, author, format, language, tags, file_path, \
+                         volume_number, series) \
+                         VALUES ('Berserk', 'Kentaro Miura', 'cbz', 'ja', '', ?1, ?2, ?3)",
+                        rusqlite::params![format!("/books/Berserk v{volume}.cbz"), volume, series],
+                    )
+                    .unwrap();
+                    books.push(conn.last_insert_rowid());
+                }
+                let alice_id: i64 = conn
+                    .query_row("SELECT id FROM users WHERE username = 'alice'", [], |row| {
+                        row.get(0)
+                    })
+                    .unwrap();
+                conn.execute(
+                    "INSERT INTO reading_progress (user_id, book_id, position, total, finished) \
+                     VALUES (?1, ?2, 9, 10, 1), (?1, ?3, 3, 10, 0)",
+                    [alice_id, books[0], books[1]],
+                )
+                .unwrap();
+                Ok((library, series, books[0], books[1]))
+            })
+            .unwrap();
+        let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
+        let finished = serde_json::json!({ "position": 9, "total": 10, "finished": true });
+        let started = serde_json::json!({ "position": 3, "total": 10, "finished": false });
+        let unread = serde_json::json!({ "position": null, "total": null, "finished": false });
+
+        let series_list = format!("/api/v1/libraries/{library}/series");
+        let books = format!("/api/v1/series/{series}/books");
+        for (token, finished_count, progress) in [
+            (&alice, 1, [finished.clone(), started.clone()]),
+            (&bob, 0, [unread.clone(), unread.clone()]),
+        ] {
+            let (_, _, body) = call(&app, authorized("GET", &series_list, token, None)).await;
+            assert_eq!(json(&body)[0]["finished_count"], finished_count);
+            let (_, _, body) = call(&app, authorized("GET", &books, token, None)).await;
+            let listed: Vec<_> = json(&body)
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|book| (book["id"].clone(), book["progress"].clone()))
+                .collect();
+            assert_eq!(
+                listed,
+                [
+                    (first.into(), progress[0].clone()),
+                    (second.into(), progress[1].clone())
+                ]
+            );
+        }
+        let (_, _, body) = call(
+            &app,
+            authorized("GET", &format!("/api/v1/books/{second}"), &alice, None),
+        )
+        .await;
+        assert_eq!(json(&body)["progress"], started);
     }
 
     #[tokio::test]

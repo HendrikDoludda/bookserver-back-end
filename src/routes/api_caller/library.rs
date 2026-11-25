@@ -11,10 +11,12 @@ use axum::{
 use crate::{
     book_pages::{self, PageContent},
     data_models::books_model::{
-        BookDetails, BookSummary, LibraryChanges, LibraryCoverChoice, LibrarySummary, NewLibrary,
-        PageSummary, ProgressChange, ReadingModeChange, ReadingModeSetting, SeriesChanges,
-        SeriesCoverChoice, SeriesListing, SeriesMerge, SeriesSummary,
+        BookDetails, BookSummary, LibraryChanges, LibraryCoverChoice, LibrarySeries,
+        LibrarySummary, NewLibrary, PageSummary, ProgressChange, ReadingModeChange,
+        ReadingModeSetting, SeriesBook, SeriesChanges, SeriesCoverChoice, SeriesListing,
+        SeriesMerge, SeriesSummary,
     },
+    database_related_scripts::db_reading_progress,
     db::{convert_system_time_to_unix_time, Database},
     error_types::{AppErrors, DatabaseError, PageError},
     models::{
@@ -55,13 +57,14 @@ pub async fn get_libraries(
     Ok(Json(libraries))
 }
 
-/// Return every series that belongs to the given library, by name, with its number of books,
-/// each with its row id.
+/// Return every series that belongs to the given library, by name, with its number of books and
+/// how many of them the calling user finished, each with its row id.
 pub async fn get_series_in_library(
-    _session: AuthSession,
+    session: AuthSession,
     State(db): State<Arc<Database>>,
     PathParams(library_id): PathParams<i64>,
-) -> Result<Json<Vec<WithId<SeriesSummary>>>, AppErrors> {
+) -> Result<Json<Vec<WithId<LibrarySeries>>>, AppErrors> {
+    let user_id = session.0.user_id;
     let series = db
         .read(move |conn| {
             let series_ids =
@@ -72,14 +75,19 @@ pub async fn get_series_in_library(
             )?;
             let book_counts =
                 Database::count_books_per_series_in_library_with_connection(conn, library_id)?;
+            let finished_counts =
+                db_reading_progress::finished_per_series_in_library(conn, user_id, library_id)?;
             Ok(series
                 .into_iter()
                 .map(|one| WithId {
                     id: one.id,
-                    data: SeriesSummary::new(
-                        one.data,
-                        book_counts.get(&one.id).copied().unwrap_or(0),
-                    ),
+                    data: LibrarySeries {
+                        finished_count: finished_counts.get(&one.id).copied().unwrap_or(0),
+                        series: SeriesSummary::new(
+                            one.data,
+                            book_counts.get(&one.id).copied().unwrap_or(0),
+                        ),
+                    },
                 })
                 .collect::<Vec<_>>())
         })
@@ -87,18 +95,21 @@ pub async fn get_series_in_library(
     Ok(Json(series))
 }
 
-/// Return every book that belongs to the given series, in reading order, each with its row id.
+/// Return every book that belongs to the given series, in reading order, with the calling user's
+/// progress in it, each with its row id.
 pub async fn get_series_children(
-    _session: AuthSession,
+    session: AuthSession,
     State(db): State<Arc<Database>>,
     PathParams(series_id): PathParams<i64>,
-) -> Result<Json<Vec<WithId<BookSummary>>>, AppErrors> {
-    let books = db
+) -> Result<Json<Vec<WithId<SeriesBook>>>, AppErrors> {
+    let user_id = session.0.user_id;
+    let (books, progress) = db
         .read(move |conn| {
             let book_ids = Database::get_books_in_series_with_connection(conn, series_id)?;
-            Ok(Database::get_entries_batch_with_connection::<BookMetadata>(
-                conn, &book_ids,
-            )?)
+            let books =
+                Database::get_entries_batch_with_connection::<BookMetadata>(conn, &book_ids)?;
+            let progress = db_reading_progress::of_series(conn, user_id, series_id)?;
+            Ok((books, progress))
         })
         .await?;
 
@@ -107,7 +118,10 @@ pub async fn get_series_children(
             .into_iter()
             .map(|book| WithId {
                 id: book.id,
-                data: BookSummary::from(book.data),
+                data: SeriesBook {
+                    progress: progress.get(&book.id).copied().unwrap_or_default(),
+                    book: BookSummary::from(book.data),
+                },
             })
             .collect(),
     ))
@@ -175,16 +189,18 @@ pub async fn retrieve_metadata(
 ) -> Result<Json<BookDetails>, AppErrors> {
     // TODO: return metadata for every metadata type, not just books.
     let user_id = session.0.user_id;
-    let (book, reading_mode) = db
+    let (book, reading_mode, progress) = db
         .read(move |conn| {
             let book = Database::get_entry_with_connection::<BookMetadata>(conn, id)?;
             let reading_mode = reading_modes::mode_for(conn, user_id, &book)?;
-            Ok((book, reading_mode))
+            let progress = db_reading_progress::find(conn, user_id, id)?.unwrap_or_default();
+            Ok((book, reading_mode, progress))
         })
         .await?;
     Ok(Json(BookDetails {
         book: BookSummary::from(book),
         reading_mode,
+        progress,
     }))
 }
 

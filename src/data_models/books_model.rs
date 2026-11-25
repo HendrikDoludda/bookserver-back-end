@@ -4,6 +4,7 @@ use crate::{
     db::checked_unix_time,
     models::{
         BookMetadata, BookSeriesMetadata, Directory, LibraryMetadata, LibraryType, ReadingMode,
+        ReadingProgress,
     },
 };
 
@@ -184,13 +185,32 @@ fn whole_as_integer<S: Serializer>(number: &Option<f64>, serializer: S) -> Resul
     }
 }
 
-/// One book as `GET /books/{id}` answers it: its summary, and the mode the calling user opens it
-/// in.
+/// One book as `GET /books/{id}` answers it: its summary, the mode the calling user opens it in,
+/// and their progress in it.
 #[derive(Debug, Serialize)]
 pub struct BookDetails {
     #[serde(flatten)]
     pub book: BookSummary,
     pub reading_mode: ReadingMode,
+    pub progress: ReadingProgress,
+}
+
+/// One book as `GET /series/{id}/books` lists it: its summary, and the calling user's progress in
+/// it.
+#[derive(Debug, Serialize)]
+pub struct SeriesBook {
+    #[serde(flatten)]
+    pub book: BookSummary,
+    pub progress: ReadingProgress,
+}
+
+/// One series as `GET /libraries/{id}/series` lists it: its summary, and how many of its books the
+/// calling user finished.
+#[derive(Debug, Serialize)]
+pub struct LibrarySeries {
+    #[serde(flatten)]
+    pub series: SeriesSummary,
+    pub finished_count: i64,
 }
 
 /// `PUT /api/v1/series/{id}/reading_mode`'s body. The mode is text, checked in code: as an enum,
