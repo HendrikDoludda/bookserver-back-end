@@ -1,4 +1,6 @@
 {
+  "continue_empty": "Noch kein Buch angefangen. Die, die du gerade liest, erscheinen hier.",
+  "continue_reading": "Weiterlesen",
   "empty": "Noch keine Bibliotheken. Sie erscheinen, sobald ein Admin die Buchordner scannt.",
   "reload": "Neu laden",
   "title": "Bibliotheken"

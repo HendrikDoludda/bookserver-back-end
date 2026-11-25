@@ -3,7 +3,7 @@
 | Feature | Tier | State | Doc |
 |---|---|---|---|
 | Flutter app | F1 | in progress | [73-flutter-app](features/73-flutter-app.md) |
-| Read state | 3 | in progress | [02-read-state](features/02-read-state.md) |
+| Read state | 3 | completed | [02-read-state](features/02-read-state.md) |
 | Metadata enrichment | 3 | not started | [09-metadata-enrichment](features/09-metadata-enrichment.md) |
 | Search | 3 | not started | [11-search](features/11-search.md) |
 | Plan to read | 3 | not started | [40-plan-to-read](features/40-plan-to-read.md) |

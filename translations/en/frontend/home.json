@@ -1,4 +1,7 @@
 {
+  "continue_empty": "No book started yet. The ones you're in the middle of show here.",
+  "continue_reading": "Continue reading",
+  "@continue_reading": "The button in the libraries' top bar, and the title of the screen it opens: the books the user started and hasn't finished.",
   "empty": "No libraries yet. They appear once an admin scans the book folders.",
   "reload": "Reload",
   "title": "Libraries"
