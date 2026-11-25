@@ -206,6 +206,18 @@ pub struct ReadingModeSetting {
     pub mode: ReadingMode,
 }
 
+/// `PATCH /api/v1/books/{id}/progress`: the caller's place — `position` and `total`, sent
+/// together — and whether they finished the book; a field left out stays as it is. A place can't
+/// be cleared, so `null` for it is refused rather than read as left out.
+#[derive(Debug, Deserialize)]
+pub struct ProgressChange {
+    #[serde(default, deserialize_with = "present")]
+    pub position: Option<Option<i64>>,
+    #[serde(default, deserialize_with = "present")]
+    pub total: Option<Option<i64>>,
+    pub finished: Option<bool>,
+}
+
 /// One entry of a book's page list. `width` and `height` are the image's pixels as stored (EXIF
 /// rotation isn't applied), `None` when its header can't be read.
 #[derive(Debug, Serialize)]

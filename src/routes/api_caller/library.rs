@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::SystemTime};
 
 use axum::{
     body::Body,
@@ -12,13 +12,17 @@ use crate::{
     book_pages::{self, PageContent},
     data_models::books_model::{
         BookDetails, BookSummary, LibraryChanges, LibraryCoverChoice, LibrarySummary, NewLibrary,
-        PageSummary, ReadingModeChange, ReadingModeSetting, SeriesChanges, SeriesCoverChoice,
-        SeriesListing, SeriesMerge, SeriesSummary,
+        PageSummary, ProgressChange, ReadingModeChange, ReadingModeSetting, SeriesChanges,
+        SeriesCoverChoice, SeriesListing, SeriesMerge, SeriesSummary,
     },
-    db::Database,
+    db::{convert_system_time_to_unix_time, Database},
     error_types::{AppErrors, DatabaseError, PageError},
-    models::{BookMetadata, BookSeriesMetadata, DatabaseTypes, LibraryMetadata, WithId},
-    routes::{covers::CoverKind, library_management, reading_modes, served_files},
+    models::{
+        BookMetadata, BookSeriesMetadata, DatabaseTypes, LibraryMetadata, ReadingProgress, WithId,
+    },
+    routes::{
+        covers::CoverKind, library_management, reading_modes, reading_progress, served_files,
+    },
     scanner::cover_image_retriever::Covers,
     stream_reader::serve_file,
 };
@@ -182,6 +186,31 @@ pub async fn retrieve_metadata(
         book: BookSummary::from(book),
         reading_mode,
     }))
+}
+
+/// `GET /api/v1/books/{id}/progress`: the calling user's progress in the book.
+pub async fn get_progress(
+    session: AuthSession,
+    State(db): State<Arc<Database>>,
+    PathParams(id): PathParams<i64>,
+) -> Result<Json<ReadingProgress>, AppErrors> {
+    Ok(Json(
+        reading_progress::progress_of(db, session.0.user_id, id).await?,
+    ))
+}
+
+/// `PATCH /api/v1/books/{id}/progress` with `{"position"?, "total"?, "finished"?}`: changes the
+/// calling user's progress in the book and answers it as stored.
+pub async fn save_progress(
+    session: AuthSession,
+    State(db): State<Arc<Database>>,
+    PathParams(id): PathParams<i64>,
+    JsonBody(change): JsonBody<ProgressChange>,
+) -> Result<Json<ReadingProgress>, AppErrors> {
+    let now = convert_system_time_to_unix_time(SystemTime::now());
+    Ok(Json(
+        reading_progress::save_progress(db, session.0.user_id, id, change, now).await?,
+    ))
 }
 
 /// `PUT /api/v1/series/{id}/reading_mode`: the calling user's mode for every book of the series;

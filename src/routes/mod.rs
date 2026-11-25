@@ -10,6 +10,7 @@ pub mod library_management;
 pub mod login;
 pub mod password_reset;
 pub mod reading_modes;
+pub mod reading_progress;
 pub mod registration;
 pub mod served_files;
 pub mod totp_cipher;

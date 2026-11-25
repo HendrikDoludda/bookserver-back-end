@@ -23,9 +23,9 @@ use crate::{
         library::{
             add_library, add_series_to_library, choose_library_cover, choose_series_cover,
             delete_library, delete_series, get_cover, get_libraries, get_page, get_pages,
-            get_series_children, get_series_in_library, list_series, merge_series,
+            get_progress, get_series_children, get_series_in_library, list_series, merge_series,
             remove_series_from_library, request_file, reset_library_cover, reset_series_cover,
-            retrieve_metadata, set_reading_mode, update_library, update_series,
+            retrieve_metadata, save_progress, set_reading_mode, update_library, update_series,
         },
         locales::{get_translations, list_locales},
         scans::{scan_all_directories, scan_directory, scan_status},
@@ -87,7 +87,7 @@ pub fn set_up_routes() -> Router<AppState> {
         .route("/books/{id}/pages/{number}", get(get_page))
         .route(
             "/books/{id}/progress",
-            get(not_implemented).patch(not_implemented),
+            get(get_progress).patch(save_progress),
         )
         .route("/covers/{kind}/{id}", get(get_cover))
         .route("/scan", post(scan_all_directories))
@@ -312,12 +312,7 @@ mod tests {
         let member = logged_in(&temp, "bob", "member");
         let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
 
-        for (method, uri) in [
-            ("GET", "/api/v1/books/1/progress"),
-            ("PATCH", "/api/v1/books/1/progress"),
-            ("POST", "/api/v1/metadata/scan"),
-            ("GET", "/api/v1/search"),
-        ] {
+        for (method, uri) in [("POST", "/api/v1/metadata/scan"), ("GET", "/api/v1/search")] {
             let (status, _, body) = call(&app, authorized(method, uri, &member, None)).await;
             assert_eq!(status, StatusCode::NOT_IMPLEMENTED, "{method} {uri}");
             assert_eq!(
@@ -827,6 +822,72 @@ mod tests {
             .await;
             assert_eq!(answered, status, "{body}");
             assert_eq!(json(&answer), serde_json::json!({ "error": key }), "{body}");
+        }
+    }
+
+    #[tokio::test]
+    async fn each_user_saves_and_reads_back_their_own_progress_over_http() {
+        let temp = TempDatabase::open();
+        let bob = logged_in(&temp, "bob", "member");
+        let carol = logged_in(&temp, "carol", "member");
+        let berserk = scanned_series(&temp, "Berserk");
+        scanned_book(&temp, berserk, "/books/Berserk v01.cbz");
+        let book: i64 = temp
+            .db
+            .setup_new_transaction(|conn| {
+                Ok(conn
+                    .query_row("SELECT id FROM books", [], |row| row.get(0))
+                    .unwrap())
+            })
+            .unwrap();
+        let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
+        let uri = format!("/api/v1/books/{book}/progress");
+        let unread = serde_json::json!({ "position": null, "total": null, "finished": false });
+
+        let (status, _, answer) = call(&app, authorized("GET", &uri, &bob, None)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(json(&answer), unread);
+
+        let body = serde_json::json!({ "position": 4, "total": 200 });
+        let (status, _, answer) = call(&app, authorized("PATCH", &uri, &bob, Some(body))).await;
+        assert_eq!(status, StatusCode::OK);
+        let read = serde_json::json!({ "position": 4, "total": 200, "finished": false });
+        assert_eq!(json(&answer), read);
+        let (_, _, answer) = call(&app, authorized("GET", &uri, &bob, None)).await;
+        assert_eq!(json(&answer), read);
+
+        let body = serde_json::json!({ "finished": true });
+        let (_, _, answer) = call(&app, authorized("PATCH", &uri, &bob, Some(body))).await;
+        assert_eq!(
+            json(&answer),
+            serde_json::json!({ "position": 4, "total": 200, "finished": true })
+        );
+
+        let (_, _, answer) = call(&app, authorized("GET", &uri, &carol, None)).await;
+        assert_eq!(json(&answer), unread, "bob's progress is his own");
+
+        for body in [
+            serde_json::json!({}),
+            serde_json::json!({ "position": 4 }),
+            serde_json::json!({ "position": 200, "total": 200 }),
+            serde_json::json!({ "position": null, "total": null }),
+            serde_json::json!({ "position": "4", "total": 200 }),
+        ] {
+            let (status, _, answer) =
+                call(&app, authorized("PATCH", &uri, &bob, Some(body.clone()))).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+            assert_eq!(
+                json(&answer),
+                serde_json::json!({ "error": "invalid_request" }),
+                "{body}"
+            );
+        }
+        let unknown = format!("/api/v1/books/{}/progress", book + 1);
+        let body = serde_json::json!({ "finished": true });
+        for (method, body) in [("GET", None), ("PATCH", Some(body))] {
+            let (status, _, answer) = call(&app, authorized(method, &unknown, &bob, body)).await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{method}");
+            assert_eq!(json(&answer), serde_json::json!({ "error": "not_found" }));
         }
     }
 
