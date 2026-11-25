@@ -69,6 +69,12 @@ const MIGRATIONS: &[Migration] = &[
         sql: include_str!("../../migrations/0008_series_match_key_composed.sql"),
         step: Some(compose_match_keys),
     },
+    Migration {
+        version: 9,
+        name: "series_match_keys",
+        sql: include_str!("../../migrations/0009_series_match_keys.sql"),
+        step: None,
+    },
 ];
 
 /// Migration 8: every series' match key composed (NFC), as the scanner now builds its keys.
@@ -1325,5 +1331,41 @@ mod tests {
             .collect::<Result<_, _>>()
             .unwrap();
         assert_eq!(left, ["/comics/Saga v01.cbz", "/old/Loose.cbz"]);
+    }
+
+    #[test]
+    fn a_series_holds_an_extra_key_once_and_its_keys_go_with_it() {
+        let conn = memory_connection();
+        let berserk = insert_series(&conn, "berserk");
+        let monster = insert_series(&conn, "monster");
+        let add_key = |series_id: i64, key: &str| {
+            conn.execute(
+                "INSERT INTO series_match_keys (series_id, match_key) VALUES (?1, ?2)",
+                params![series_id, key],
+            )
+        };
+
+        add_key(berserk, "berserk deluxe").unwrap();
+        // Two series may hold one key: each is found by it only in its own directory.
+        add_key(monster, "berserk deluxe").unwrap();
+        assert!(
+            add_key(berserk, "berserk deluxe").is_err(),
+            "one row per series and key"
+        );
+        assert!(
+            add_key(monster + 1, "monster").is_err(),
+            "only a series that exists"
+        );
+
+        conn.execute("DELETE FROM series WHERE id = ?1", [berserk])
+            .unwrap();
+        let left: Vec<(i64, String)> = conn
+            .prepare("SELECT series_id, match_key FROM series_match_keys ORDER BY series_id")
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(left, [(monster, "berserk deluxe".to_string())]);
     }
 }

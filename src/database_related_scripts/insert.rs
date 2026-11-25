@@ -1,6 +1,6 @@
 use crate::data_models::models::{
     BookMetadata, BookSeriesMetadata, Directory, LibraryMetadata, RecoveryCodes,
-    SeriesLibraryConnection, Sessions, UserMetadata, UserSettings, TOTP,
+    SeriesLibraryConnection, SeriesMatchKey, Sessions, UserMetadata, UserSettings, TOTP,
 };
 use crate::database_related_scripts::db::{
     checked_unix_time, convert_system_time_to_unix_time, logged,
@@ -161,6 +161,20 @@ impl Insert for SeriesLibraryConnection {
     }
 }
 
+impl Insert for SeriesMatchKey {
+    fn insert(&self, conn: &Connection) -> Result<i64, DatabaseError> {
+        let query = "INSERT INTO series_match_keys (series_id, match_key) VALUES (?1, ?2)";
+
+        conn.execute(query, params![self.series_id, self.match_key])
+            .map_err(logged(
+                "inserting into",
+                "series_match_keys",
+                DatabaseError::InsertionFailure,
+            ))?;
+        Ok(conn.last_insert_rowid())
+    }
+}
+
 impl Insert for Sessions {
     fn insert(&self, conn: &Connection) -> Result<i64, DatabaseError> {
         let query = "INSERT INTO sessions (user_id, device_id, device_name, platform, \
@@ -287,6 +301,33 @@ mod tests {
             logs.contains("inserting into users failed: UNIQUE constraint failed"),
             "{logs}"
         );
+    }
+
+    #[test]
+    fn a_series_match_key_is_stored_once_for_its_series() {
+        let conn = memory_connection();
+        conn.execute("INSERT INTO series (name) VALUES ('berserk')", [])
+            .unwrap();
+        let series_id = conn.last_insert_rowid();
+        let key = SeriesMatchKey {
+            series_id,
+            match_key: "berserk deluxe".to_string(),
+        };
+
+        Database::insert_with_connection(&conn, &key).unwrap();
+
+        let stored: (i64, String) = conn
+            .query_row(
+                "SELECT series_id, match_key FROM series_match_keys",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(stored, (series_id, "berserk deluxe".to_string()));
+        assert!(matches!(
+            Database::insert_with_connection(&conn, &key),
+            Err(DatabaseError::InsertionFailure)
+        ));
     }
 
     /// A book the way the scanner writes one when a file tells it nothing more.

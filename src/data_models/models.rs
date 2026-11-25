@@ -30,6 +30,7 @@ pub enum DatabaseTypes {
     Translations,
     ReadingModes,
     Directories,
+    SeriesMatchKeys,
 }
 
 impl DatabaseTypes {
@@ -50,11 +51,12 @@ impl DatabaseTypes {
             DatabaseTypes::Translations => "translations",
             DatabaseTypes::ReadingModes => "reading_modes",
             DatabaseTypes::Directories => "directories",
+            DatabaseTypes::SeriesMatchKeys => "series_match_keys",
         }
     }
 
-    /// The column a row is identified by; `None` for `library_elements`, `translations` and
-    /// `reading_modes`, whose rows are identified by two columns.
+    /// The column a row is identified by; `None` for `library_elements`, `translations`,
+    /// `reading_modes` and `series_match_keys`, whose rows are identified by two columns.
     pub fn get_key_column(&self) -> Option<&str> {
         match self {
             DatabaseTypes::Books
@@ -65,7 +67,8 @@ impl DatabaseTypes {
             | DatabaseTypes::Directories => Some("id"),
             DatabaseTypes::LibraryElements
             | DatabaseTypes::Translations
-            | DatabaseTypes::ReadingModes => None,
+            | DatabaseTypes::ReadingModes
+            | DatabaseTypes::SeriesMatchKeys => None,
             DatabaseTypes::Locales => Some("code"),
             DatabaseTypes::Totp | DatabaseTypes::UserSettings => Some("user_id"),
             DatabaseTypes::Session => Some("session_id"),
@@ -483,6 +486,14 @@ impl AsRef<str> for SeriesLibraryConnectionDatabaseColumns {
             SeriesLibraryConnectionDatabaseColumns::LibraryId => "library_id",
         }
     }
+}
+
+// === Series match key model ==================================================
+/// A key the series answers to besides its own `match_key`: one of a series merged into it.
+#[derive(Debug, Clone)]
+pub struct SeriesMatchKey {
+    pub series_id: i64,
+    pub match_key: String,
 }
 
 // === Parsed Name model =======================================================

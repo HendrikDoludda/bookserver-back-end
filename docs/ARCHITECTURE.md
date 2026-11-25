@@ -87,7 +87,7 @@
 - Every connection is set up by `db::configure` — SQLite applies `foreign_keys` per connection, not per file.
 - Values are always bound parameters; table and column names are interpolated only from trusted enums and consts, never from request input.
 - Each table names its key column (`KEY` on `Extract` and `Update`, `DatabaseTypes::get_key_column`); nothing assumes it is `id`.
-- Tables without a single key column (the `library_elements` junction, `email_codes`, `reading_modes`) don't implement `Extract`; dedicated functions query them — `Database` methods for the junction, `db_email_codes.rs` for the codes, `db_reading_modes.rs` for the modes.
+- Tables without a single key column (the `library_elements` junction, `series_match_keys`, `email_codes`, `reading_modes`) don't implement `Extract`; dedicated functions query them — `Database` methods for the junction and the match keys, `db_email_codes.rs` for the codes, `db_reading_modes.rs` for the modes.
 - The translation catalog's tables (`locales`, `translation_keys`, `translations`) are queried only through `db_translations.rs`.
 - A list reads its rows in one query — `extract_all` for a whole table, or the ids first, in the list's order, and then one `IN (…)` query (`extract_batch`), which keeps that order — never one query per row.
 - An API answer never carries a server file path or a file hash: a book goes out as `BookSummary`, and its file and cover are reached by its id. The exceptions are an admin's answer about a scanned directory, which carries that directory's own path, and a scan's status, whose scope names the folders it reads and whose failures carry a path inside their directory.
