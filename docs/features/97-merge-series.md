@@ -1,6 +1,6 @@
 # Merge series
 
-State: in progress
+State: completed
 
 An admin merges series A into series B: A's books, library places and reading modes move to B, A
 is deleted, and the scanner files A's future books into B. It fixes any grouping the scanner got
@@ -11,5 +11,5 @@ wrong — one series split by two naming styles, or by a misspelt file name.
 - [x] 1.5 h · `series_of_directory_by_match_key_with_connection` also finds a series by a key in `series_match_keys`, so `series_for` puts a new file named like A into B [DB] [BE]
 - [x] 4 h · `merge_series`, in one transaction: A's books go to B; B joins every library A is in; a user's reading mode for A moves to B unless they have one for B; B keeps its name, description and cover, taking A's for an empty one, and its years, taking A's only when it has neither; A's `match_key` and extra keys become B's extra keys; A is deleted [BE]
 - [x] 1 h · `POST /api/v1/series/{id}/merges` with `{"series_id"}` — merges that series (A) into this one (B) — behind `AdminSession`, answering B as `PATCH /series/{id}` does; merging a series into itself is a 400, an unknown id a 404 [BE]
-- [ ] 3 h · "Merge into…" on the series edit screen: pick B from `GET /series` — with book count and libraries, so two series of one name can be told apart — confirm, then show B [FE]
-- [ ] 0.5 h · Check by hand: merge two series of one folder, then add a new volume named like the merged-away one; after a scan it shows in the kept series
+- [x] 3 h · "Merge into another series" on the series edit screen: pick B from every other series of `GET /series`, shown as the series list shows them; a question naming B; then the series list shows B without A [FE]
+- [x] 0.5 h · Check by hand: merge two series of one folder, then add a new volume named like the merged-away one; after a scan it shows in the kept series

@@ -15,7 +15,7 @@
 | Manual metadata editing | 3 | not started | [66-manual-metadata-editing](features/66-manual-metadata-editing.md) |
 | Downloadable builds | 3 | in progress | [85-downloadable-builds](features/85-downloadable-builds.md) |
 | Run-together file names | 3 | completed | [96-run-together-names](features/96-run-together-names.md) |
-| Merge series | 3 | in progress | [97-merge-series](features/97-merge-series.md) |
+| Merge series | 3 | completed | [97-merge-series](features/97-merge-series.md) |
 | File upload & ingestion | 4 | not started | [05-uploads-and-ingestion](features/05-uploads-and-ingestion.md) |
 | Backend admin web view | 4 | not started | [06-admin-web-view](features/06-admin-web-view.md) |
 | Theming & branding | 4 | not started | [08-theming-and-branding](features/08-theming-and-branding.md) |
