@@ -97,6 +97,39 @@ pub fn of_series(
     ))
 }
 
+/// The books the user started and hasn't finished — with a place, unfinished — each with their
+/// progress in it, the most recently read first.
+pub fn started(
+    conn: &Connection,
+    user_id: i64,
+) -> Result<Vec<(i64, ReadingProgress)>, DatabaseError> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT book_id, position, total, finished FROM reading_progress \
+             WHERE user_id = ?1 AND finished = 0 AND position IS NOT NULL \
+             ORDER BY last_read_at DESC, book_id",
+        )
+        .map_err(logged(
+            "reading",
+            "reading_progress",
+            DatabaseError::TaskPreparationFailure,
+        ))?;
+    let rows = stmt
+        .query_map([user_id], |row| {
+            Ok((row.get::<_, i64>("book_id")?, progress_of_row(row)?))
+        })
+        .map_err(logged(
+            "reading",
+            "reading_progress",
+            DatabaseError::QueryFailure,
+        ))?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(logged(
+        "reading",
+        "reading_progress",
+        DatabaseError::NextRowFailure,
+    ))
+}
+
 /// How many books of each series in the library the user finished, by series id; a series they
 /// finished none of is absent.
 pub fn finished_per_series_in_library(
@@ -282,6 +315,39 @@ mod tests {
                     finished: true,
                 }
             )])
+        );
+    }
+
+    #[test]
+    fn started_books_have_a_place_and_no_finish_and_the_latest_comes_first() {
+        let conn = memory_connection();
+        let alice = insert_user(&conn, "alice");
+        let bob = insert_user(&conn, "bob");
+        let berserk = insert_series(&conn, "Berserk");
+        let [earlier, later, finished, marked, bobs] = [1, 2, 3, 4, 5]
+            .map(|volume| insert_book(&conn, berserk, &format!("/books/Berserk v{volume}.cbz")));
+        save(&conn, alice, earlier, place(1, 10), None, 100).unwrap();
+        save(&conn, alice, later, place(2, 10), None, 300).unwrap();
+        save(&conn, alice, finished, place(9, 10), Some(true), 200).unwrap();
+        // Marked read by hand and then unread: never opened.
+        save(&conn, alice, marked, None, Some(true), 250).unwrap();
+        save(&conn, alice, marked, None, Some(false), 260).unwrap();
+        save(&conn, bob, bobs, place(4, 10), None, 400).unwrap();
+
+        let started_books: Vec<i64> = started(&conn, alice)
+            .unwrap()
+            .into_iter()
+            .map(|(book, _)| book)
+            .collect();
+
+        assert_eq!(started_books, [later, earlier]);
+        assert_eq!(
+            started(&conn, alice).unwrap()[0].1,
+            ReadingProgress {
+                position: Some(2),
+                total: Some(10),
+                finished: false,
+            }
         );
     }
 

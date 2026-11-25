@@ -204,6 +204,16 @@ pub struct SeriesBook {
     pub progress: ReadingProgress,
 }
 
+/// One book as `GET /books/started` lists it: its summary, its series' name, and the calling user's
+/// progress in it.
+#[derive(Debug, Serialize)]
+pub struct StartedBook {
+    #[serde(flatten)]
+    pub book: BookSummary,
+    pub series_name: Option<String>,
+    pub progress: ReadingProgress,
+}
+
 /// One series as `GET /libraries/{id}/series` lists it: its summary, and how many of its books the
 /// calling user finished.
 #[derive(Debug, Serialize)]

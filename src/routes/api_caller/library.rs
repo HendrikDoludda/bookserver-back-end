@@ -1,4 +1,8 @@
-use std::{sync::Arc, time::SystemTime};
+use std::{
+    collections::{BTreeSet, HashMap},
+    sync::Arc,
+    time::SystemTime,
+};
 
 use axum::{
     body::Body,
@@ -14,7 +18,7 @@ use crate::{
         BookDetails, BookSummary, LibraryChanges, LibraryCoverChoice, LibrarySeries,
         LibrarySummary, NewLibrary, PageSummary, ProgressChange, ReadingModeChange,
         ReadingModeSetting, SeriesBook, SeriesChanges, SeriesCoverChoice, SeriesListing,
-        SeriesMerge, SeriesSummary,
+        SeriesMerge, SeriesSummary, StartedBook,
     },
     database_related_scripts::db_reading_progress,
     db::{convert_system_time_to_unix_time, Database},
@@ -202,6 +206,52 @@ pub async fn retrieve_metadata(
         reading_mode,
         progress,
     }))
+}
+
+/// `GET /api/v1/books/started`: the books the calling user started and hasn't finished, the most
+/// recently read first, each with its series' name and their progress in it.
+pub async fn started_books(
+    session: AuthSession,
+    State(db): State<Arc<Database>>,
+) -> Result<Json<Vec<WithId<StartedBook>>>, AppErrors> {
+    let user_id = session.0.user_id;
+    let (books, series, progress) = db
+        .read(move |conn| {
+            let started = db_reading_progress::started(conn, user_id)?;
+            let ids: Vec<i64> = started.iter().map(|(id, _)| *id).collect();
+            let books = Database::get_entries_batch_with_connection::<BookMetadata>(conn, &ids)?;
+            let series_ids: Vec<i64> = books
+                .iter()
+                .filter_map(|book| book.data.series)
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect();
+            let series = Database::get_entries_batch_with_connection::<BookSeriesMetadata>(
+                conn,
+                &series_ids,
+            )?;
+            Ok((books, series, started))
+        })
+        .await?;
+
+    let names: HashMap<i64, String> = series
+        .into_iter()
+        .map(|one| (one.id, one.data.name))
+        .collect();
+    let progress: HashMap<i64, ReadingProgress> = progress.into_iter().collect();
+    Ok(Json(
+        books
+            .into_iter()
+            .map(|book| WithId {
+                id: book.id,
+                data: StartedBook {
+                    series_name: book.data.series.and_then(|id| names.get(&id).cloned()),
+                    progress: progress.get(&book.id).copied().unwrap_or_default(),
+                    book: BookSummary::from(book.data),
+                },
+            })
+            .collect(),
+    ))
 }
 
 /// `GET /api/v1/books/{id}/progress`: the calling user's progress in the book.

@@ -25,7 +25,8 @@ use crate::{
             delete_library, delete_series, get_cover, get_libraries, get_page, get_pages,
             get_progress, get_series_children, get_series_in_library, list_series, merge_series,
             remove_series_from_library, request_file, reset_library_cover, reset_series_cover,
-            retrieve_metadata, save_progress, set_reading_mode, update_library, update_series,
+            retrieve_metadata, save_progress, set_reading_mode, started_books, update_library,
+            update_series,
         },
         locales::{get_translations, list_locales},
         scans::{scan_all_directories, scan_directory, scan_status},
@@ -81,6 +82,7 @@ pub fn set_up_routes() -> Router<AppState> {
             put(choose_series_cover).delete(reset_series_cover),
         )
         .route("/series/{id}/reading_mode", put(set_reading_mode))
+        .route("/books/started", get(started_books))
         .route("/books/{id}", get(retrieve_metadata))
         .route("/books/{id}/file", get(request_file))
         .route("/books/{id}/pages", get(get_pages))
@@ -1337,6 +1339,88 @@ mod tests {
                 "progress": { "position": null, "total": null, "finished": false },
             })
         );
+    }
+
+    #[tokio::test]
+    async fn the_started_books_are_the_callers_latest_first_with_their_series() {
+        let temp = TempDatabase::open();
+        let alice = logged_in(&temp, "alice", "member");
+        let bob = logged_in(&temp, "bob", "member");
+        let (series_book, loose_book) = temp
+            .db
+            .setup_new_transaction(|conn| {
+                conn.execute("INSERT INTO series (name) VALUES ('Berserk')", [])
+                    .unwrap();
+                let series = conn.last_insert_rowid();
+                let book = |path: &str, series: Option<i64>| {
+                    conn.execute(
+                        "INSERT INTO books (title, author, format, language, tags, file_path, \
+                         volume_number, series) \
+                         VALUES ('Berserk', 'Kentaro Miura', 'cbz', 'ja', '', ?1, 3, ?2)",
+                        rusqlite::params![path, series],
+                    )
+                    .unwrap();
+                    conn.last_insert_rowid()
+                };
+                let series_book = book("/books/Berserk v03.cbz", Some(series));
+                let loose_book = book("/books/Loose.cbz", None);
+                let alice_id: i64 = conn
+                    .query_row("SELECT id FROM users WHERE username = 'alice'", [], |row| {
+                        row.get(0)
+                    })
+                    .unwrap();
+                conn.execute(
+                    "INSERT INTO reading_progress \
+                     (user_id, book_id, position, total, finished, last_read_at) \
+                     VALUES (?1, ?2, 3, 10, 0, 100), (?1, ?3, 7, 20, 0, 200)",
+                    [alice_id, series_book, loose_book],
+                )
+                .unwrap();
+                Ok((series_book, loose_book))
+            })
+            .unwrap();
+        let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
+
+        let (status, _, body) = call(
+            &app,
+            authorized("GET", "/api/v1/books/started", &alice, None),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::OK, "`started` is no book id");
+        let listed: Vec<_> = json(&body)
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|book| {
+                (
+                    book["id"].clone(),
+                    book["series_name"].clone(),
+                    book["volume_number"].clone(),
+                    book["progress"].clone(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            listed,
+            [
+                (
+                    loose_book.into(),
+                    serde_json::Value::Null,
+                    3.into(),
+                    serde_json::json!({ "position": 7, "total": 20, "finished": false }),
+                ),
+                (
+                    series_book.into(),
+                    "Berserk".into(),
+                    3.into(),
+                    serde_json::json!({ "position": 3, "total": 10, "finished": false }),
+                ),
+            ],
+            "the most recently read first"
+        );
+        let (_, _, body) = call(&app, authorized("GET", "/api/v1/books/started", &bob, None)).await;
+        assert_eq!(json(&body), serde_json::json!([]));
     }
 
     #[tokio::test]
@@ -2942,6 +3026,7 @@ mod tests {
         ("PUT", "/api/v1/series/1/cover"),
         ("DELETE", "/api/v1/series/1/cover"),
         ("PUT", "/api/v1/series/1/reading_mode"),
+        ("GET", "/api/v1/books/started"),
         ("GET", "/api/v1/books/1"),
         ("GET", "/api/v1/books/1/file"),
         ("GET", "/api/v1/books/1/pages"),
