@@ -969,10 +969,17 @@ fn series_for(conn: &Connection, title: &str, directory_id: i64) -> Result<i64, 
 /// Splits a name like `[Group] My_Series v02 c13.5` into a clean title plus the volume / chapter /
 /// page numbers found in it; bracketed tags leave the title. The title ends at the first marker —
 /// in `Berserk v01 The Black Swordsman` what follows names the volume, not the series. A name
-/// without one may end in its volume's bare number: `Picture book 2`.
+/// without one may end in its volume's bare number: `Picture book 2`. A name without any separator
+/// is first split where its words meet: `BerserkV02`.
 fn parse_name(name: &str) -> ParsedName {
     // `\b` counts `_` as a letter: as a space, it lets `Berserk_v01` show its volume.
     let name = TAG_REGEX.replace_all(name, " ").replace('_', " ");
+    // A name with a separator already shows where its words are; only one without any is guessed at.
+    let name = if is_run_together(&name) {
+        split_run_together(&name)
+    } else {
+        name
+    };
     let number = |regex: &Regex| {
         regex
             .captures(&name)
@@ -1013,6 +1020,40 @@ fn parse_name(name: &str) -> ParsedName {
         chapter_number: chapter,
         page_number: page,
     }
+}
+
+/// Whether `name`, trimmed, holds no white space and no `-`.
+fn is_run_together(name: &str) -> bool {
+    !name
+        .trim()
+        .contains(|c: char| c.is_whitespace() || c == '-')
+}
+
+/// `name` with a space before every character that [`starts_word`].
+fn split_run_together(name: &str) -> String {
+    let mut split = String::with_capacity(name.len() + 8);
+    let mut chars = name.chars().peekable();
+    let mut before = None;
+    while let Some(c) = chars.next() {
+        if before.is_some_and(|before| starts_word(before, c, chars.peek().copied())) {
+            split.push(' ');
+        }
+        split.push(c);
+        before = Some(c);
+    }
+    split
+}
+
+/// Whether `c`, between `before` and `after`, starts a word of a run-together name: a capital after
+/// a lowercase letter (`yB` in `HellboyBPRD`), the last capital of a run when a lowercase letter
+/// follows (`DV` in `BPRDVolume`), or a digit next to a letter (`e1`, `0T`).
+fn starts_word(before: char, c: char, after: Option<char>) -> bool {
+    // Only letters with a case: a CJK name has no capitals to show its words, and stays as written.
+    let cased = |c: char| c.is_uppercase() || c.is_lowercase();
+    (before.is_lowercase() && c.is_uppercase())
+        || (before.is_uppercase() && c.is_uppercase() && after.is_some_and(char::is_lowercase))
+        || (cased(before) && c.is_ascii_digit())
+        || (before.is_ascii_digit() && cased(c))
 }
 
 /// `text` with `-` as a space and every run of white space one space, trimmed.
@@ -1429,6 +1470,36 @@ mod tests {
         assert_eq!(
             series_of(&temp.db, &books[0]),
             series_of(&temp.db, &books[1])
+        );
+    }
+
+    #[test]
+    fn volumes_named_without_separators_join_one_series() {
+        let dir = TempDir::new();
+        let temp = TempDatabase::open();
+        let directory = add_directory(&temp.db, dir.path(), None);
+
+        let books = scan_books(
+            &dir,
+            &temp.db,
+            directory,
+            &[
+                "HellboyBPRDVolume10Title.cbz",
+                "HellboyBPRDVolume11Title.cbz",
+            ],
+        );
+
+        assert_eq!(
+            series_rows(&temp.db),
+            [("Hellboy BPRD".to_string(), "hellboy bprd".to_string())]
+        );
+        assert_eq!(
+            title_and_volume(&temp.db, &books[0]),
+            ("Hellboy BPRD".to_string(), Some(10))
+        );
+        assert_eq!(
+            title_and_volume(&temp.db, &books[1]),
+            ("Hellboy BPRD".to_string(), Some(11))
         );
     }
 
@@ -2170,6 +2241,31 @@ mod tests {
             ("Version 2.0", "Version 2.0", None, None, None),
             ("COVID-19", "COVID 19", None, None, None),
             ("Berserk v01 extra 3", "Berserk", Some(1), None, None),
+            // A name without any separator is split where its words meet.
+            (
+                "HellboyBPRDVolume10Title",
+                "Hellboy BPRD",
+                Some(10),
+                None,
+                None,
+            ),
+            ("BerserkV01", "Berserk", Some(1), None, None),
+            ("Berserk01", "Berserk", Some(1), None, None),
+            ("OnePieceChapter7", "One Piece", None, Some(7.0), None),
+            (
+                "[Group]HellboyBPRDVol2(Digital)",
+                "Hellboy BPRD",
+                Some(2),
+                None,
+                None,
+            ),
+            ("ÄrgerV2", "Ärger", Some(2), None, None),
+            ("XMen", "X Men", None, None, None),
+            ("ONEPIECE", "ONEPIECE", None, None, None),
+            ("Berserk", "Berserk", None, None, None),
+            ("進撃の巨人1", "進撃の巨人1", None, None, None),
+            // One separator, and the name is left as written.
+            ("Hellboy BPRDVol2", "Hellboy BPRDVol2", None, None, None),
         ] {
             let parsed = parse_name(name);
             assert_eq!(
@@ -2199,6 +2295,7 @@ mod tests {
         let nested = parsed("/books/Berserk/Vol 1/c013.cbz", BookFormat::Cbz);
         let pages = parsed("/books/Dune/v01", BookFormat::ImageComic);
         let numbered = parsed("/books/Berserk 2/c013.cbz", BookFormat::Cbz);
+        let run_together = parsed("/books/HellboyBPRD/v01", BookFormat::ImageComic);
 
         assert_eq!(
             (file.title.as_str(), file.chapter_number),
@@ -2217,6 +2314,11 @@ mod tests {
             (numbered.title.as_str(), numbered.chapter_number),
             ("Berserk", Some(13.0)),
             "a folder's own number leaves its title"
+        );
+        assert_eq!(
+            (run_together.title.as_str(), run_together.volume_number),
+            ("Hellboy BPRD", Some(1)),
+            "a folder's name is split as a file's is"
         );
     }
 
