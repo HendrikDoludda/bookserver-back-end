@@ -94,7 +94,7 @@
 - Every reference to another table is a declared `FOREIGN KEY` — `PRAGMA foreign_keys = ON` enforces only declared ones.
 - Times are stored as `INTEGER` unix seconds and read with `read_time` (must have a value — NULL is an error naming the column) or `read_optional_time` (NULL is `None`).
 - A column is nullable exactly when its Rust field is an `Option`.
-- The scanner finds a series by `match_key` — the title it was first found under, lowercased and then composed (NFC) in Rust — among the series holding a book of the same directory; never by `name`, which an admin edits.
+- The scanner finds a series by `match_key` — the title it was first found under, lowercased and then composed (NFC) in Rust — or by a key in `series_match_keys`, the keys of the series merged into it, among the series holding a book of the same directory; never by `name`, which an admin edits.
 - The scan reads a book's file outside any transaction, then stores its series, library link and row in one `IMMEDIATE` transaction of their own — never one per scan, which would hold the write lock for its whole length.
 - No file-system call runs inside a transaction, or while a pooled connection is held: on a share that stopped answering it would keep that connection for good.
 - A scan opens a stored book's file only when its `fingerprint` changed — a file's size and nanosecond time, an image folder's digest of its pages' — or when it still lacks a cover; a changed file renews its row under the same id and series.

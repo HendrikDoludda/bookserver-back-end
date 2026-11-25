@@ -616,15 +616,18 @@ impl Database {
         Ok(libraries)
     }
 
-    /// The series whose match key is `key` and that holds a book of the directory — the oldest,
-    /// should there be several — or `None`.
+    /// The series whose match key is `key`, or that holds `key` among its extra keys, and that
+    /// holds a book of the directory — the oldest, should there be several — or `None`.
     pub fn series_of_directory_by_match_key_with_connection(
         conn: &Connection,
         directory_id: i64,
         key: &str,
     ) -> Result<Option<i64>, DatabaseError> {
         conn.query_row(
-            "SELECT id FROM series WHERE match_key = ?1 AND EXISTS \
+            "SELECT id FROM series WHERE (match_key = ?1 OR EXISTS \
+             (SELECT 1 FROM series_match_keys \
+              WHERE series_match_keys.series_id = series.id AND series_match_keys.match_key = ?1)) \
+             AND EXISTS \
              (SELECT 1 FROM books WHERE books.series = series.id AND books.directory_id = ?2) \
              ORDER BY id LIMIT 1",
             rusqlite::params![key, directory_id],

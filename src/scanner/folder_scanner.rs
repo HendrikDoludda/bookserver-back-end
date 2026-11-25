@@ -1661,6 +1661,74 @@ mod tests {
     }
 
     #[test]
+    fn a_new_volume_named_like_a_merged_series_joins_the_series_it_went_into() {
+        let dir = TempDir::new();
+        let temp = TempDatabase::open();
+        let directory = add_directory(&temp.db, dir.path(), None);
+        let first = scan_books(
+            &dir,
+            &temp.db,
+            directory,
+            &["Berserk v01.cbz", "Berserk Deluxe v01.cbz"],
+        );
+        let merged = series_of(&temp.db, &first[0]).unwrap();
+        let kept = series_of(&temp.db, &first[1]).unwrap();
+        // As a merge leaves them: the book moved, the key kept, the merged series gone.
+        sql(
+            &temp.db,
+            &format!("UPDATE books SET series = {kept} WHERE series = {merged}"),
+        );
+        sql(
+            &temp.db,
+            &format!(
+                "INSERT INTO series_match_keys (series_id, match_key) VALUES ({kept}, 'berserk')"
+            ),
+        );
+        sql(&temp.db, &format!("DELETE FROM series WHERE id = {merged}"));
+
+        let second = scan_books(&dir, &temp.db, directory, &["Berserk v02.cbz"]);
+
+        assert_eq!(series_of(&temp.db, &second[0]), Some(kept));
+        assert_eq!(
+            series_rows(&temp.db),
+            [("Berserk Deluxe".to_string(), "berserk deluxe".to_string())]
+        );
+    }
+
+    #[test]
+    fn an_extra_key_finds_its_series_only_in_a_directory_holding_a_book_of_it() {
+        let manga = TempDir::new();
+        let comics = TempDir::new();
+        let temp = TempDatabase::open();
+        let manga_directory = add_directory(&temp.db, manga.path(), None);
+        let comics_directory = add_directory(&temp.db, comics.path(), None);
+        let deluxe = scan_books(
+            &manga,
+            &temp.db,
+            manga_directory,
+            &["Berserk Deluxe v01.cbz"],
+        );
+        let kept = series_of(&temp.db, &deluxe[0]).unwrap();
+        sql(
+            &temp.db,
+            &format!(
+                "INSERT INTO series_match_keys (series_id, match_key) VALUES ({kept}, 'berserk')"
+            ),
+        );
+
+        let elsewhere = scan_books(&comics, &temp.db, comics_directory, &["Berserk v01.cbz"]);
+
+        assert_ne!(series_of(&temp.db, &elsewhere[0]), Some(kept));
+        assert_eq!(
+            series_rows(&temp.db),
+            [
+                ("Berserk Deluxe".to_string(), "berserk deluxe".to_string()),
+                ("Berserk".to_string(), "berserk".to_string()),
+            ]
+        );
+    }
+
+    #[test]
     fn a_failing_series_lookup_stores_no_book_and_no_second_series() {
         let dir = TempDir::new();
         let temp = TempDatabase::open();
