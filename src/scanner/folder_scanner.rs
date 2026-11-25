@@ -38,17 +38,20 @@ use crate::scanner::heartbeat::Heartbeat;
 const HASH_CHUNK: usize = 256 * 1024;
 
 // Filename patterns, compiled once on first use and then reused.
-// A keyword and its number may be joined by nothing, a space, `.` or `-`: `v01`, `vol 3`, `vol.3`,
-// `v-3`.
-static VOLUME_REGEX: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?i)\b(?:v|vol|volume|book)[ .-]?(\d+)\b").unwrap());
+// A keyword and its number may be joined by nothing, a space, `.`, `-` or — for a keyword of two
+// letters or more — `. `: `v01`, `vol 3`, `vol.3`, `v-3`, `Vol. 3`. A lone letter takes no `. `:
+// `c. 1920` is circa 1920, not chapter 1920.
+static VOLUME_REGEX: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)\b(?:v[ .-]?|(?:vol|volume|book)(?:\. |[ .-])?)(\d+)\b").unwrap()
+});
 
 // A chapter may be a decimal one: `c01.5` lies between chapters 1 and 2.
-static CHAPTER_REGEX: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?i)\b(?:c|ch|chap|chapter)[ .-]?(\d+(?:\.\d+)?)\b").unwrap());
+static CHAPTER_REGEX: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)\b(?:c[ .-]?|(?:ch|chap|chapter)(?:\. |[ .-])?)(\d+(?:\.\d+)?)\b").unwrap()
+});
 
 static PAGE_REGEX: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?i)\b(?:p|pa|page)[ .-]?(\d+)\b").unwrap());
+    Lazy::new(|| Regex::new(r"(?i)\b(?:p[ .-]?|(?:pa|page)(?:\. |[ .-])?)(\d+)\b").unwrap());
 
 // Up to three digits: a fourth makes it a year — `Radio-Craft August 1936` — not a volume.
 static TRAILING_NUMBER_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"\s(\d{1,3})\s*$").unwrap());
@@ -2317,6 +2320,20 @@ mod tests {
             ("bleach12", "bleach", Some(12), None, None),
             ("notebook2", "notebook", Some(2), None, None),
             ("revolver", "revolver", None, None, None),
+            // A keyword of two letters or more may take a dot and a space; a lone letter can't.
+            (
+                "Hellboy Vol. 1 Seed of Destruction",
+                "Hellboy",
+                Some(1),
+                None,
+                None,
+            ),
+            ("Hellboy Vol. 1", "Hellboy", Some(1), None, None),
+            ("Berserk Volume. 2", "Berserk", Some(2), None, None),
+            ("One Piece Ch. 5", "One Piece", None, Some(5.0), None),
+            ("One Piece Chapter. 5.5", "One Piece", None, Some(5.5), None),
+            ("Berserk Page. 3", "Berserk", None, None, Some(3)),
+            ("London c. 1850", "London c. 1850", None, None, None),
         ] {
             let parsed = parse_name(name);
             assert_eq!(

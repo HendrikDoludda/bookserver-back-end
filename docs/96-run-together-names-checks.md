@@ -8,3 +8,4 @@ Log in: `curl -X POST http://localhost:8080/api/v1/auth/login -H 'Content-Type: 
 - [ ] In the app, that library shows one series "Hellboy BPRD", its books shown as Volume 10 and Volume 11
 - [ ] Make a second new folder `Hellboy lowercase test` next to the first, with the same CBZ copied twice as `hellboybprdvolume10title.cbz` and `hellboybprdvolume11title.cbz`. After the scan the app shows one series "hellboybprd" with Volume 10 and Volume 11
 - [ ] Rename "hellboybprd" in the app to "Hellboy BPRD", then scan again with the command above: it keeps that name and both volumes. The first folder's series has the same name, so two "Hellboy BPRD" series show — expected until [97](features/97-merge-series.md) can merge them
+- [ ] Copy the CBZ once more into the first folder as `Hellboy Vol. 1 Seed of Destruction.cbz`. After the scan the app shows a series "Hellboy" holding it as Volume 1
