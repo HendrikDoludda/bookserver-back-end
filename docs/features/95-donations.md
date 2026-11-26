@@ -12,3 +12,4 @@ a Sponsor button and a line in the README of this repo and the app's.
 
 ## Missing information
 - [ ] Which platform — GitHub Sponsors, Ko-fi or another? — answered by: you
+- [ ] Do donations count as revenue under AniList's API terms, which need a commercial licence above $150 a month ([64](64-manga-metadata.md))? — answered by: AniList (contact@anilist.co), before donations go live

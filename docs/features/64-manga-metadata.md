@@ -1,19 +1,13 @@
 # Manga metadata
 
-State: not started
+State: in progress
 
 Manga libraries get their metadata from AniList, MangaDex and MangaUpdates, through the
-[metadata enrichment](09-metadata-enrichment.md) flow. Providers are chosen by library type,
-and there is no manga library type yet.
+[metadata enrichment](09-metadata-enrichment.md) flow.
 
 ## Build
-- [ ] 2 h · A manga library type, per the manga-type decision — today `LibraryType` has no manga variant and the scanner creates every library as `LibraryType::Books` [BE]
-- [ ] 4 h · AniList adapter for `MetadataProvider` [BE]
+- [ ] 1 h · `LibraryType::Manga`, sent and stored as `"manga"` — unknown strings still map to `Others`, so no migration is needed [BE]
+- [ ] 1 h · Manga in the app's library type list [FE]
+- [ ] 5 h · AniList adapter for `MetadataProvider`: GraphQL with constant query text and the search in `variables`; candidates for a title and one entry by id; descriptions as plain text; one request every 2 s, AniList's documented limit while degraded (30 a minute) [BE]
 - [ ] 4 h · MangaDex adapter for `MetadataProvider` [BE]
 - [ ] 4 h · MangaUpdates adapter for `MetadataProvider` [BE]
-
-## Open decisions
-- [ ] Add a `Manga` variant to `LibraryType`, or route manga through a per-library provider override? — blocks: the manga library type. Suggested: the `Manga` variant — routing already keys off library type, and unknown strings map to `Others`, so no migration is needed.
-
-## Missing information
-- [ ] Can AniList be used commercially? Believed: a licence is needed above $150/month revenue — answered by: AniList's API terms

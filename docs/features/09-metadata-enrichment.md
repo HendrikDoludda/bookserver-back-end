@@ -1,38 +1,30 @@
 # Metadata enrichment
 
-State: not started
+State: in progress
 
 Fill in what filenames can't tell — descriptions, covers, tags, release years, authors — from
-online databases. One `MetadataProvider` picks the adapter from the library's type; a title
-search returns candidates, and only a confirmed or auto-matched candidate is merged into the
-entry. The adapters are [63](63-book-metadata.md) books, [64](64-manga-metadata.md) manga and
-[65](65-comic-metadata.md) comics.
+online databases. Each library type has one provider; a title search returns candidates, and only
+an admin's confirmed candidate or a single exact match is merged into the series. The adapters are
+[63](63-book-metadata.md) books, [64](64-manga-metadata.md) manga and [65](65-comic-metadata.md)
+comics. A sensitive item ([10](10-sensitive-content-controls.md)) never goes online and nothing
+overrides that: its metadata is entered by hand ([66](66-manual-metadata-editing.md)).
 
 ## Build
-- [ ] 1 h · Store the provider's external id, per the external-id decision, so an entry can be re-fetched without searching again [DB]
-- [ ] 1 h · Add an HTTP client with `rustls` features, matching the in-server TLS of [52](52-packaging-and-deployment.md); `serde_json` is already a dependency [BE]
-- [ ] 3 h · `MetadataProvider`: one adapter per source, chosen from the library's `library_type`, per the provider-chain decision — start with an `enum` and one `match` (an `async fn` trait isn't object-safe without `async-trait`) [BE]
-- [ ] 2 h · Title search through the library's provider, returning candidates without writing anything [BE]
-- [ ] 4 h · Merge a confirmed candidate — description, cover, tags, release years, author — and store the external id, in one transaction per entry; fetched covers go into `cover_images/` like extracted ones [BE]
-- [ ] 1 h · Treat the scanner's placeholders (`"Unknown Author"`, `BookLanguage::Other("Unknown")`) as empty when merging [BE]
-- [ ] 1 h · Merge tags into the comma-joined `books.tags` through one split, de-duplicate and re-join helper, per the tags decision [BE]
-- [ ] 2 h · Auto-match per the auto-match decision, logging every auto-match [BE]
-- [ ] 3 h · Cache provider results per the cache decision, so a repeated scan doesn't call the provider again [DB] [BE]
-- [ ] 2 h · Respect each provider's documented rate limit (not one global number); hitting it gives a logged, non-500 outcome [BE]
-- [ ] 2 h · Store provider API keys per the key-storage decision; never log a key [BE]
-- [ ] 1 h · Sensitive items skip every online lookup: one check in the provider dispatch, not per adapter, so a new adapter can't forget it ([10](10-sensitive-content-controls.md)) [BE]
-- [ ] 3 h · Per-entry search and confirm endpoints, per the endpoint decision [BE]
-- [ ] 4 h · Bulk enrichment pass behind `POST /metadata/scan`, run in the background — not inline, where an unresponsive provider would stall the response — per the endpoint decision [BE]
-- [ ] 0.5 h · Require `AdminSession` on the enrichment endpoints [BE]
-- [ ] 4 h · Candidate list and confirm screen [FE]
-
-## Open decisions
-- [ ] External id on `series`, `books`, or both? — blocks: storing the external id. Suggested: `series` first — that is where providers describe things; a per-book id only if single volumes need matching.
-- [ ] One provider per library type, or a fallback chain? — blocks: `MetadataProvider`. Suggested: one per type to start, shaped so a chain can be added without changing call sites.
-- [ ] When may it auto-match instead of asking? — blocks: auto-match. Suggested: only on a single exact match of the normalised title.
-- [ ] Where do API keys live: env vars, `secrets.toml`, or a database table the admin web view can edit? — blocks: key storage. Suggested: the database, with env vars as the bootstrap fallback.
-- [ ] Cache in a database table or in memory? — blocks: the cache. Suggested: a table keyed by provider and query or external id — it survives restarts.
-- [ ] Keep `books.tags` a comma-joined string, or make tags a relation? — blocks: tag merging. Suggested: keep the string for now; a relation also changes the search plan in [11](11-search.md).
-- [ ] Is `POST /metadata/scan` the bulk pass or a single lookup? — blocks: the endpoints. Suggested: the bulk pass, with separate per-entry search and confirm endpoints.
-- [ ] Add the `is_sensitive` column here, since enrichment (Tier 3) ships before the sensitive toggle (Tier 4)? — blocks: the sensitive skip. Suggested: yes — add it with this feature and honour it from the first request.
-- [ ] Can an admin bypass the skip for one sensitive item? — blocks: the sensitive skip. Suggested: no — a sensitive item gets hand-entered metadata only ([66](66-manual-metadata-editing.md)).
+- [ ] 2 h · Migration 0011: `is_sensitive` (`BOOLEAN NOT NULL DEFAULT FALSE`) on `library` and `series`, in both models' field, `Extract::COLUMNS`, `FromRow` and `Insert`; tables `series_metadata_sources` (series, provider, external id, matched by `auto` or `admin`, when) and `metadata_cache` [DB]
+- [ ] 1 h · A series is sensitive when its own flag or any of its libraries' flag is set — one query [DB]
+- [ ] 3 h · `src/metadata/`: `MetadataProvider`, one per library type through `provider_for` (Manga → AniList); `clear` is the only way to an adapter call — it refuses a sensitive series (`sensitive_item`) and picks the provider from the series' libraries (`no_metadata_provider`, `ambiguous_metadata_provider`) [BE]
+- [ ] 1 h · HTTP client: `reqwest` with `rustls`, as [52](52-packaging-and-deployment.md) will serve TLS; one client, no redirects, timeouts, capped bodies [BE]
+- [ ] 2 h · Each provider's documented rate limit (not one global number); a 429's `Retry-After` is honoured; an admin's request that would wait over 10 s answers 503 `provider_rate_limited` with `Retry-After` [BE]
+- [ ] 3 h · Cache provider answers in `metadata_cache` for 30 days, keyed by provider and normalised query or external id; expired rows are deleted at each bulk pass's start [DB] [BE]
+- [ ] 2 h · `GET /series/{id}/metadata/candidates?query=`, admin only: the provider's candidates for the query (default: the series' name), each marked `exact_match`; writes nothing [BE]
+- [ ] 3 h · Merge a candidate into a series in one transaction: description and release years on the series, author and tags on its books, and the source row. Replace mode writes every field the candidate has; fill mode only empty ones [BE]
+- [ ] 1 h · In fill mode `"Unknown Author"` and no tags count as empty; the language is never merged [BE]
+- [ ] 1 h · Tags merge through one split, de-duplicate and re-join helper over the comma-joined `books.tags`; a comma inside a tag becomes a space [BE]
+- [ ] 1 h · `PUT /series/{id}/metadata_source` `{"external_id"}`, admin only: fetches the entry itself and merges it in replace mode [BE]
+- [ ] 2 h · A candidate's cover is fetched over https from its provider's image host only, capped at 10 MB, checked to be a JPEG, PNG or WebP, and written to the cover folder under its hash; replace mode sets the series' cover, fill mode only when the series shows none [BE]
+- [ ] 4 h · Bulk pass in the background, one at a time, admin only: `POST /metadata/scan` (every library) and `POST /libraries/{id}/metadata/scan`; only series never matched; 409 `metadata_scan_in_progress` [BE]
+- [ ] 1 h · The bulk pass auto-matches only a single candidate whose title equals the series' name as `match_key` normalises both; fill mode; every auto-match is logged [BE]
+- [ ] 1 h · `GET /metadata/scan/status`, admin only: the running pass's counts and how the last one ended [BE]
+- [ ] 2 h · Provider API keys in the database, encrypted with XChaCha20-Poly1305 under a key BLAKE3-derived from the signing key in `secrets.toml` (own context string, the provider's name as associated data, as `TotpCipher` does); write-only — an admin endpoint sets or replaces a key and answers only whether one is set; a key is never logged. Built with the first adapter that needs a key ([63](63-book-metadata.md), [65](65-comic-metadata.md)) [DB] [BE]
+- [ ] 4 h · Candidate list and confirm screen, reached from the admin's series form [FE]
+- [ ] 1 h · "Fetch metadata" on the admin's library form, starting the library's bulk pass [FE]

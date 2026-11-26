@@ -192,10 +192,6 @@ fn listen_address_from(
     Ok(SocketAddr::new(address, port))
 }
 
-pub fn get_api_key() -> Option<String> {
-    env::var("API_KEY").ok()
-}
-
 /// Reads the `SMTP_*` settings. `Ok(None)` means email is off because `SMTP_HOST` isn't
 /// set; a half-filled configuration is an error, so a typo can't silently switch email off.
 pub fn get_email_config() -> Result<Option<EmailConfig>, ApplicationSetUpErrors> {
