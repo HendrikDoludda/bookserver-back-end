@@ -77,7 +77,8 @@ impl Insert for Directory {
 impl Insert for BookSeriesMetadata {
     fn insert(&self, conn: &Connection) -> Result<i64, DatabaseError> {
         let query = "INSERT INTO series (name, match_key, description, cover_image, \
-            start_release_year, end_release_year) VALUES (?1, ?2, ?3, ?4, ?5, ?6)";
+            start_release_year, end_release_year, is_sensitive) \
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)";
 
         let params = params![
             self.name.clone(),
@@ -85,7 +86,8 @@ impl Insert for BookSeriesMetadata {
             self.description.clone(),
             self.cover_image.clone(),
             self.start_release_year,
-            self.end_release_year
+            self.end_release_year,
+            self.is_sensitive
         ];
 
         conn.execute(query, params).map_err(logged(
@@ -100,14 +102,15 @@ impl Insert for BookSeriesMetadata {
 
 impl Insert for LibraryMetadata {
     fn insert(&self, conn: &Connection) -> Result<i64, DatabaseError> {
-        let query = "INSERT INTO library (library_name, library_type, cover_image, description) \
-            VALUES (?1, ?2, ?3, ?4)";
+        let query = "INSERT INTO library (library_name, library_type, cover_image, description, \
+            is_sensitive) VALUES (?1, ?2, ?3, ?4, ?5)";
 
         let params = params![
             self.name.clone(),
             self.library_type.as_str(),
             self.cover_image.clone(),
-            self.description.clone()
+            self.description.clone(),
+            self.is_sensitive
         ];
 
         conn.execute(query, params).map_err(logged(
@@ -519,12 +522,14 @@ mod tests {
             library_type: LibraryType::Books,
             cover_image: None,
             description: None,
+            is_sensitive: false,
         };
         let curated = LibraryMetadata {
             name: "Favourites".to_string(),
             library_type: LibraryType::Comics,
             cover_image: Some("./cover_images/favourites.jpg".to_string()),
             description: Some("The best ones".to_string()),
+            is_sensitive: true,
         };
         let scanned_id = Database::insert_with_connection(&conn, &scanned).unwrap();
         let curated_id = Database::insert_with_connection(&conn, &curated).unwrap();
@@ -535,6 +540,7 @@ mod tests {
         assert_eq!(stored.library_type.as_str(), "books");
         assert_eq!(stored.cover_image, None);
         assert_eq!(stored.description, None);
+        assert!(!stored.is_sensitive);
 
         // The list endpoint's path: every row in one query, each with its id.
         let listed = Database::get_entries_batch_with_connection::<LibraryMetadata>(
@@ -555,6 +561,7 @@ mod tests {
             Some("./cover_images/favourites.jpg")
         );
         assert_eq!(stored.description.as_deref(), Some("The best ones"));
+        assert!(stored.is_sensitive);
     }
 
     #[test]
@@ -568,6 +575,7 @@ mod tests {
             cover_image: None,
             start_release_year: None,
             end_release_year: None,
+            is_sensitive: false,
         };
         let described = BookSeriesMetadata {
             name: "a quiet sea".to_string(),
@@ -576,6 +584,7 @@ mod tests {
             cover_image: Some("./cover_images/sea.jpg".to_string()),
             start_release_year: Some(1999),
             end_release_year: Some(2004),
+            is_sensitive: true,
         };
         let scanned_id = Database::insert_with_connection(&conn, &scanned).unwrap();
         let described_id = Database::insert_with_connection(&conn, &described).unwrap();
@@ -591,6 +600,7 @@ mod tests {
         assert_eq!(stored.cover_image, None);
         assert_eq!(stored.start_release_year, None);
         assert_eq!(stored.end_release_year, None);
+        assert!(!stored.is_sensitive);
 
         let listed = Database::get_entries_batch_with_connection::<BookSeriesMetadata>(
             &conn,
@@ -610,6 +620,7 @@ mod tests {
         );
         assert_eq!(stored.start_release_year, Some(1999));
         assert_eq!(stored.end_release_year, Some(2004));
+        assert!(stored.is_sensitive);
     }
 
     // Whole seconds only: the columns store unix seconds, so anything finer is dropped.

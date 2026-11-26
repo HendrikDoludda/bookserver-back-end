@@ -81,6 +81,7 @@ impl FromRow for BookSeriesMetadata {
             cover_image: row.get("cover_image")?,
             start_release_year: row.get("start_release_year")?,
             end_release_year: row.get("end_release_year")?,
+            is_sensitive: row.get("is_sensitive")?,
         })
     }
 }
@@ -93,6 +94,7 @@ impl FromRow for LibraryMetadata {
             library_type: LibraryType::from_str(&library_type),
             cover_image: row.get("cover_image")?,
             description: row.get("description")?,
+            is_sensitive: row.get("is_sensitive")?,
         })
     }
 }

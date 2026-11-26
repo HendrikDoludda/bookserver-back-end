@@ -81,6 +81,12 @@ const MIGRATIONS: &[Migration] = &[
         sql: include_str!("../../migrations/0010_reading_progress.sql"),
         step: None,
     },
+    Migration {
+        version: 11,
+        name: "metadata_enrichment",
+        sql: include_str!("../../migrations/0011_metadata_enrichment.sql"),
+        step: None,
+    },
 ];
 
 /// Migration 8: every series' match key composed (NFC), as the scanner now builds its keys.
@@ -358,8 +364,10 @@ mod tests {
             ("books", "file_path"),
             ("library", "library_name"),
             ("library", "library_type"),
+            ("library", "is_sensitive"),
             ("series", "name"),
             ("series", "match_key"),
+            ("series", "is_sensitive"),
             ("directories", "path"),
             ("directories", "created_at"),
         ];
@@ -1431,5 +1439,115 @@ mod tests {
             .collect::<Result<_, _>>()
             .unwrap();
         assert_eq!(left, [(alice, first)]);
+    }
+
+    #[test]
+    fn a_database_of_the_tenth_schema_keeps_its_libraries_and_series_none_of_them_sensitive() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        configure(&conn).unwrap();
+        // As a server of the tenth schema left it.
+        for migration in &MIGRATIONS[..10] {
+            conn.execute_batch(migration.sql).unwrap();
+        }
+        conn.execute_batch(
+            "CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, \
+             applied_at INTEGER NOT NULL); \
+             INSERT INTO schema_migrations (version, applied_at) \
+             VALUES (1, 0), (2, 0), (3, 0), (4, 0), (5, 0), (6, 0), (7, 0), (8, 0), (9, 0), \
+             (10, 0); \
+             INSERT INTO library (library_name, library_type) VALUES ('Manga', 'comics');",
+        )
+        .unwrap();
+        let berserk = insert_series(&conn, "berserk");
+
+        run(&mut conn).unwrap();
+
+        assert!(applied(&conn, 11));
+        let flags: (String, i64, String, i64) = conn
+            .query_row(
+                "SELECT library_name, library.is_sensitive, name, series.is_sensitive \
+                 FROM library, series WHERE series.id = ?1",
+                [berserk],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(flags, ("Manga".to_string(), 0, "berserk".to_string(), 0));
+    }
+
+    #[test]
+    fn a_sensitive_flag_is_0_or_1() {
+        let conn = memory_connection();
+        let flag = |table: &str, value: i64| {
+            let sql = match table {
+                "library" => {
+                    "INSERT INTO library (library_name, library_type, is_sensitive) \
+                     VALUES ('Manga', 'comics', ?1)"
+                }
+                _ => "INSERT INTO series (name, match_key, is_sensitive) VALUES ('a', 'a', ?1)",
+            };
+            conn.execute(sql, [value])
+        };
+
+        for table in ["library", "series"] {
+            flag(table, 0).unwrap();
+            flag(table, 1).unwrap();
+            assert!(flag(table, 2).is_err(), "{table} takes no 2");
+        }
+    }
+
+    #[test]
+    fn a_series_has_one_metadata_source_matched_automatically_or_by_an_admin_and_loses_it_with_the_series(
+    ) {
+        let conn = memory_connection();
+        let berserk = insert_series(&conn, "berserk");
+        let monster = insert_series(&conn, "monster");
+        let add = |series_id: i64, matched_by: &str| {
+            conn.execute(
+                "INSERT INTO series_metadata_sources \
+                 (series_id, provider, external_id, matched_by, matched_at) \
+                 VALUES (?1, 'anilist', '30002', ?2, 0)",
+                params![series_id, matched_by],
+            )
+        };
+
+        assert!(
+            add(berserk, "robot").is_err(),
+            "matched auto or by an admin"
+        );
+        add(berserk, "auto").unwrap();
+        add(monster, "admin").unwrap();
+        assert!(add(berserk, "admin").is_err(), "one source per series");
+        assert!(
+            add(monster + 1, "admin").is_err(),
+            "only a series that exists"
+        );
+
+        conn.execute("DELETE FROM series WHERE id = ?1", [berserk])
+            .unwrap();
+        let left: Vec<i64> = conn
+            .prepare("SELECT series_id FROM series_metadata_sources")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(left, [monster]);
+    }
+
+    #[test]
+    fn a_provider_keeps_one_answer_per_request() {
+        let conn = memory_connection();
+        let cache = |provider: &str, key: &str| {
+            conn.execute(
+                "INSERT INTO metadata_cache (provider, request_key, response, fetched_at) \
+                 VALUES (?1, ?2, '[]', 0)",
+                [provider, key],
+            )
+        };
+
+        cache("anilist", "search:berserk").unwrap();
+        cache("anilist", "media:30002").unwrap();
+        cache("mangadex", "search:berserk").unwrap();
+        assert!(cache("anilist", "search:berserk").is_err());
     }
 }

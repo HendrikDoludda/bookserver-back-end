@@ -191,6 +191,7 @@ fn store(
                 library_type,
                 cover_image: None,
                 description: None,
+                is_sensitive: false,
             };
             Some(Database::insert_with_connection(conn, &library)?)
         }

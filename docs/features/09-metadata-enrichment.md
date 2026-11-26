@@ -10,8 +10,8 @@ comics. A sensitive item ([10](10-sensitive-content-controls.md)) never goes onl
 overrides that: its metadata is entered by hand ([66](66-manual-metadata-editing.md)).
 
 ## Build
-- [ ] 2 h · Migration 0011: `is_sensitive` (`BOOLEAN NOT NULL DEFAULT FALSE`) on `library` and `series`, in both models' field, `Extract::COLUMNS`, `FromRow` and `Insert`; tables `series_metadata_sources` (series, provider, external id, matched by `auto` or `admin`, when) and `metadata_cache` [DB]
-- [ ] 1 h · A series is sensitive when its own flag or any of its libraries' flag is set — one query [DB]
+- [x] 2 h · Migration 0011: `is_sensitive` (`BOOLEAN NOT NULL DEFAULT FALSE`) on `library` and `series`, in both models' field, `Extract::COLUMNS`, `FromRow` and `Insert`; tables `series_metadata_sources` (series, provider, external id, matched by `auto` or `admin`, when) and `metadata_cache` [DB]
+- [x] 1 h · A series is sensitive when its own flag or any of its libraries' flag is set — one query [DB]
 - [ ] 3 h · `src/metadata/`: `MetadataProvider`, one per library type through `provider_for` (Manga → AniList); `clear` is the only way to an adapter call — it refuses a sensitive series (`sensitive_item`) and picks the provider from the series' libraries (`no_metadata_provider`, `ambiguous_metadata_provider`) [BE]
 - [ ] 1 h · HTTP client: `reqwest` with `rustls`, as [52](52-packaging-and-deployment.md) will serve TLS; one client, no redirects, timeouts, capped bodies [BE]
 - [ ] 2 h · Each provider's documented rate limit (not one global number); a 429's `Retry-After` is honoured; an admin's request that would wait over 10 s answers 503 `provider_rate_limited` with `Retry-After` [BE]

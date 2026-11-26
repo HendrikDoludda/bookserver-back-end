@@ -46,6 +46,7 @@ pub async fn create_library(
         library_type: new.library_type,
         cover_image: None,
         description: new.description,
+        is_sensitive: false,
     };
     db.transact(move |conn| {
         let id = Database::insert_with_connection(conn, &library)?;

@@ -821,6 +821,24 @@ impl Database {
         ))
     }
 
+    /// Whether the series is sensitive: its own flag is set, or that of any library it is in.
+    pub fn series_is_sensitive_with_connection(
+        conn: &Connection,
+        series_id: i64,
+    ) -> Result<bool, DatabaseError> {
+        conn.query_row(
+            "SELECT series.is_sensitive OR EXISTS (SELECT 1 FROM library_elements \
+             JOIN library ON library.id = library_elements.library_id \
+             WHERE library_elements.series_id = series.id AND library.is_sensitive) \
+             FROM series WHERE series.id = ?1",
+            [series_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(logged("reading", "series", DatabaseError::QueryFailure))?
+        .ok_or(DatabaseError::EntryNotFound)
+    }
+
     /// Runs `operation` inside a single SQLite transaction. It commits if the closure
     /// returns `Ok`; on `Err` the transaction is dropped, which rolls it back, and the
     /// closure's own error is returned unchanged.
@@ -1225,6 +1243,37 @@ mod tests {
             [library, series],
         )
         .unwrap();
+    }
+
+    #[test]
+    fn a_series_is_sensitive_by_its_own_flag_or_that_of_any_of_its_libraries() {
+        let conn = memory_connection();
+        let open = insert_library(&conn, "open");
+        let hidden = insert_library(&conn, "hidden");
+        let plain = insert_series(&conn, "plain");
+        let own = insert_series(&conn, "own");
+        let shared = insert_series(&conn, "shared");
+        let loose = insert_series(&conn, "loose");
+        for (library, series) in [(open, plain), (open, own), (open, shared), (hidden, shared)] {
+            link(&conn, library, series);
+        }
+        conn.execute(
+            "UPDATE library SET is_sensitive = 1 WHERE id = ?1",
+            [hidden],
+        )
+        .unwrap();
+        conn.execute("UPDATE series SET is_sensitive = 1 WHERE id = ?1", [own])
+            .unwrap();
+        let sensitive = |id| Database::series_is_sensitive_with_connection(&conn, id).unwrap();
+
+        assert!(!sensitive(plain), "only in a library that isn't sensitive");
+        assert!(sensitive(own), "by its own flag");
+        assert!(sensitive(shared), "one of its two libraries is sensitive");
+        assert!(!sensitive(loose), "in no library and not flagged");
+        assert!(matches!(
+            Database::series_is_sensitive_with_connection(&conn, loose + 1),
+            Err(DatabaseError::EntryNotFound)
+        ));
     }
 
     #[test]

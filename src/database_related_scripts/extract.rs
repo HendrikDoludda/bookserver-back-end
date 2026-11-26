@@ -139,14 +139,15 @@ impl Extract for Directory {
 impl Extract for BookSeriesMetadata {
     const TABLE: &'static str = "series";
     const KEY: &'static str = "id";
-    const COLUMNS: &'static str =
-        "id, name, match_key, description, cover_image, start_release_year, end_release_year";
+    const COLUMNS: &'static str = "id, name, match_key, description, cover_image, \
+        start_release_year, end_release_year, is_sensitive";
 }
 
 impl Extract for LibraryMetadata {
     const TABLE: &'static str = "library";
     const KEY: &'static str = "id";
-    const COLUMNS: &'static str = "id, library_name, library_type, cover_image, description";
+    const COLUMNS: &'static str =
+        "id, library_name, library_type, cover_image, description, is_sensitive";
 }
 
 impl Extract for UserMetadata {

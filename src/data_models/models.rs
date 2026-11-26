@@ -32,6 +32,8 @@ pub enum DatabaseTypes {
     Directories,
     SeriesMatchKeys,
     ReadingProgress,
+    SeriesMetadataSources,
+    MetadataCache,
 }
 
 impl DatabaseTypes {
@@ -54,12 +56,14 @@ impl DatabaseTypes {
             DatabaseTypes::Directories => "directories",
             DatabaseTypes::SeriesMatchKeys => "series_match_keys",
             DatabaseTypes::ReadingProgress => "reading_progress",
+            DatabaseTypes::SeriesMetadataSources => "series_metadata_sources",
+            DatabaseTypes::MetadataCache => "metadata_cache",
         }
     }
 
     /// The column a row is identified by; `None` for `library_elements`, `translations`,
-    /// `reading_modes`, `series_match_keys` and `reading_progress`, whose rows are identified by
-    /// two columns.
+    /// `reading_modes`, `series_match_keys`, `reading_progress` and `metadata_cache`, whose rows
+    /// are identified by two columns.
     pub fn get_key_column(&self) -> Option<&str> {
         match self {
             DatabaseTypes::Books
@@ -72,9 +76,11 @@ impl DatabaseTypes {
             | DatabaseTypes::Translations
             | DatabaseTypes::ReadingModes
             | DatabaseTypes::SeriesMatchKeys
-            | DatabaseTypes::ReadingProgress => None,
+            | DatabaseTypes::ReadingProgress
+            | DatabaseTypes::MetadataCache => None,
             DatabaseTypes::Locales => Some("code"),
             DatabaseTypes::Totp | DatabaseTypes::UserSettings => Some("user_id"),
+            DatabaseTypes::SeriesMetadataSources => Some("series_id"),
             DatabaseTypes::Session => Some("session_id"),
             DatabaseTypes::RecoveryCodes => Some("recovery_id"),
             DatabaseTypes::LoginChallenge => Some("challenge_id"),
@@ -372,6 +378,8 @@ pub struct BookSeriesMetadata {
     pub cover_image: Option<String>,
     pub start_release_year: Option<i64>,
     pub end_release_year: Option<i64>,
+    /// Never looked up online, nor is any series of a sensitive library.
+    pub is_sensitive: bool,
 }
 
 pub enum SeriesDatabaseColumns {
@@ -456,6 +464,8 @@ pub struct LibraryMetadata {
     pub library_type: LibraryType,
     pub cover_image: Option<String>,
     pub description: Option<String>,
+    /// None of its series is looked up online.
+    pub is_sensitive: bool,
 }
 
 pub enum LibraryDatabaseColumns {

@@ -960,6 +960,7 @@ fn series_for(conn: &Connection, title: &str, directory_id: i64) -> Result<i64, 
             cover_image: None,
             start_release_year: None,
             end_release_year: None,
+            is_sensitive: false,
         },
     )?;
     if let Some(library_id) = directory.library_id {
@@ -1184,6 +1185,7 @@ mod tests {
             library_type: LibraryType::Books,
             cover_image: None,
             description: None,
+            is_sensitive: false,
         })
         .unwrap()
     }
