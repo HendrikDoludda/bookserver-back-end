@@ -90,12 +90,13 @@ impl DatabaseTypes {
 
 // === Library type ============================================================
 /// What a library holds; stored as text in `library.library_type`, and sent as `"books"`,
-/// `"comics"`, `"magazines"`, `"documents"` or `"others"`.
+/// `"comics"`, `"manga"`, `"magazines"`, `"documents"` or `"others"`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LibraryType {
     Books,
     Comics,
+    Manga,
     Magazines,
     Documents,
     Others,
@@ -110,6 +111,7 @@ impl LibraryType {
         match s.to_lowercase().as_str() {
             "books" => LibraryType::Books,
             "comics" => LibraryType::Comics,
+            "manga" => LibraryType::Manga,
             "magazines" => LibraryType::Magazines,
             "documents" => LibraryType::Documents,
             _ => LibraryType::Others,
@@ -119,6 +121,7 @@ impl LibraryType {
         match self {
             LibraryType::Books => "books",
             LibraryType::Comics => "comics",
+            LibraryType::Manga => "manga",
             LibraryType::Magazines => "magazines",
             LibraryType::Documents => "documents",
             LibraryType::Others => "others",
@@ -808,6 +811,7 @@ mod tests {
         for library_type in [
             LibraryType::Books,
             LibraryType::Comics,
+            LibraryType::Manga,
             LibraryType::Magazines,
             LibraryType::Documents,
             LibraryType::Others,
@@ -816,6 +820,7 @@ mod tests {
             assert_eq!(sent, serde_json::json!(library_type.as_str()));
             let read: LibraryType = serde_json::from_value(sent).unwrap();
             assert_eq!(read, library_type);
+            assert_eq!(LibraryType::from_str(library_type.as_str()), library_type);
         }
     }
 

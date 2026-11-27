@@ -1,6 +1,9 @@
 # 09 Metadata enrichment — hand checks
 
-## Step 1 · Schema
-- [ ] Stop the server and start it again with `cargo run`; the log shows `Applied migration 0011 metadata_enrichment` and no error
-- [ ] `sqlite3 "$HOME/Library/Application Support/com.hendrikdoludda.bookserver/app_data.sqlite" "SELECT MAX(version) FROM schema_migrations; SELECT COUNT(*), TOTAL(is_sensitive) FROM series; SELECT COUNT(*), TOTAL(is_sensitive) FROM library;"` answers `11`, then your series count with `0.0`, then your library count with `0.0` — nothing is sensitive
-- [ ] The app shows your libraries, series and books as before
+## Step 2 · Manga library type
+- [ ] Stop the server and start it again with `cargo run` — the new type and its texts are compiled in
+- [ ] Log in: `curl -s -X POST http://127.0.0.1:8080/api/v1/auth/login -H 'Content-Type: application/json' -d '{"username_or_email":"PASTE_USERNAME","password":"PASTE_PASSWORD","device_name":"curl","platform":"macos"}' -w '\n'` — `PASTE_USERNAME` / `PASTE_PASSWORD` are your admin account's. Keep `session_token` from the answer (not `refresh_token`). If it answers `"status":"totp_required"` instead, send `curl -s -X POST http://127.0.0.1:8080/api/v1/auth/login/totp -H 'Authorization: Bearer PASTE_CHALLENGE_TOKEN' -H 'Content-Type: application/json' -d '{"code":"PASTE_APP_CODE"}' -w '\n'` with `challenge_token` from the first answer and the six digits your authenticator app shows now (not a recovery code), and keep `session_token` from that answer
+- [ ] `curl -s -X POST http://127.0.0.1:8080/api/v1/libraries -H 'Authorization: Bearer PASTE_SESSION_TOKEN' -H 'Content-Type: application/json' -d '{"name":"Manga test","library_type":"manga"}' -w '\n'` answers with an `id` and `"library_type":"manga"`
+- [ ] `curl -s -X PATCH http://127.0.0.1:8080/api/v1/libraries/PASTE_ID -H 'Authorization: Bearer PASTE_SESSION_TOKEN' -H 'Content-Type: application/json' -d '{"library_type":"Manga"}' -w '\n'` answers `{"error":"invalid_request"}` — `PASTE_ID` is the `id` from the step before; only the lowercase name is a type
+- [ ] In the app, Manage → Libraries lists "Manga test" without an error; its form shows the type as Others, as this app version doesn't know manga yet (step 11). Leave the form without saving
+- [ ] `curl -s -X DELETE http://127.0.0.1:8080/api/v1/libraries/PASTE_ID -H 'Authorization: Bearer PASTE_SESSION_TOKEN' -w '%{http_code}\n'` answers `204` — the test library is gone

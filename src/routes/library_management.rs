@@ -595,6 +595,55 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_library_is_created_and_retyped_as_manga_and_stored_as_manga() {
+        let temp = TempDatabase::open();
+        let created = create_library(
+            temp.db.clone(),
+            NewLibrary {
+                library_type: LibraryType::Manga,
+                ..new_library("Manga")
+            },
+        )
+        .await
+        .unwrap();
+        let stored_type = |id| {
+            temp.db
+                .setup_new_transaction(move |conn| {
+                    Ok(conn
+                        .query_row(
+                            "SELECT library_type FROM library WHERE id = ?1",
+                            [id],
+                            |row| row.get::<_, String>(0),
+                        )
+                        .unwrap())
+                })
+                .unwrap()
+        };
+
+        assert_eq!(created.data.library_type, LibraryType::Manga);
+        assert_eq!(stored_type(created.id), "manga");
+
+        let change = |library_type| {
+            change_library(
+                temp.db.clone(),
+                created.id,
+                changes(None, Some(library_type), None),
+            )
+        };
+        change(LibraryType::Comics).await.unwrap();
+        assert_eq!(stored_type(created.id), "comics");
+        let retyped = change(LibraryType::Manga).await.unwrap();
+        assert_eq!(retyped.data.library_type, LibraryType::Manga);
+        assert_eq!(
+            temp.db
+                .get_entry::<LibraryMetadata>(created.id)
+                .unwrap()
+                .library_type,
+            LibraryType::Manga
+        );
+    }
+
+    #[tokio::test]
     async fn a_change_without_fields_a_bad_name_or_an_unknown_library_is_refused() {
         let temp = TempDatabase::open();
         let id = create_library(temp.db.clone(), new_library("Manga"))
