@@ -8,7 +8,7 @@ use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::{Connection, OptionalExtension, Result, ToSql, TransactionBehavior};
 use serde::Serialize;
 
-use crate::data_models::models::{Comparison, DatabaseTypes, QuerySeparator, WithId};
+use crate::data_models::models::{Comparison, DatabaseTypes, LibraryType, QuerySeparator, WithId};
 use crate::database_related_scripts::{
     db_delete::Delete, db_search::Search, db_update::Update, extract::Extract, insert::Insert,
     migrations, translation_seed,
@@ -837,6 +837,42 @@ impl Database {
         .optional()
         .map_err(logged("reading", "series", DatabaseError::QueryFailure))?
         .ok_or(DatabaseError::EntryNotFound)
+    }
+
+    /// The type of each library the series is in, by library id; empty for a series in none.
+    pub fn library_types_of_series_with_connection(
+        conn: &Connection,
+        series_id: i64,
+    ) -> Result<Vec<LibraryType>, DatabaseError> {
+        let mut stmt = conn
+            .prepare(
+                "SELECT library.library_type FROM library_elements \
+                 JOIN library ON library.id = library_elements.library_id \
+                 WHERE library_elements.series_id = ?1 ORDER BY library.id",
+            )
+            .map_err(logged(
+                "reading",
+                "library_elements",
+                DatabaseError::TaskPreparationFailure,
+            ))?;
+        let types = stmt
+            .query_map([series_id], |row| row.get::<_, String>(0))
+            .map_err(logged(
+                "reading",
+                "library_elements",
+                DatabaseError::QueryFailure,
+            ))?;
+        types
+            .map(|stored| {
+                stored
+                    .map(|name| LibraryType::from_str(&name))
+                    .map_err(logged(
+                        "reading",
+                        "library_elements",
+                        DatabaseError::NextRowFailure,
+                    ))
+            })
+            .collect()
     }
 
     /// Runs `operation` inside a single SQLite transaction. It commits if the closure

@@ -439,6 +439,24 @@ impl DirectoryError {
     }
 }
 
+/// Looking a series up online.
+#[derive(Error, Debug)]
+pub enum MetadataError {
+    #[error("The series or a library it is in is sensitive, so it is never looked up online")]
+    SensitiveItem,
+    #[error("None of the series' libraries is of a type a metadata provider covers")]
+    NoProvider,
+}
+
+impl MetadataError {
+    fn status_and_key(&self) -> (StatusCode, &'static str) {
+        match self {
+            MetadataError::SensitiveItem => (StatusCode::CONFLICT, "sensitive_item"),
+            MetadataError::NoProvider => (StatusCode::CONFLICT, "no_metadata_provider"),
+        }
+    }
+}
+
 /// A shipped translation file that breaks a rule: the server doesn't start with one. `file` is
 /// the path under `translations/`, `key` the dotted name inside the file.
 #[derive(Debug, Error, PartialEq)]
@@ -516,6 +534,8 @@ pub enum AppErrors {
     Directory(#[from] DirectoryError),
     #[error(transparent)]
     Scan(#[from] ScanError),
+    #[error(transparent)]
+    Metadata(#[from] MetadataError),
     #[error("The request's body, path or query could not be read")]
     InvalidRequest,
 }
@@ -533,6 +553,7 @@ impl AppErrors {
             AppErrors::Library(err) => err.status_and_key(),
             AppErrors::Directory(err) => err.status_and_key(),
             AppErrors::Scan(err) => err.status_and_key(),
+            AppErrors::Metadata(err) => err.status_and_key(),
             AppErrors::InvalidRequest => (StatusCode::BAD_REQUEST, "invalid_request"),
         }
     }
@@ -760,6 +781,16 @@ mod tests {
                 ScanError::InProgress.into(),
                 StatusCode::CONFLICT,
                 "scan_in_progress",
+            ),
+            (
+                MetadataError::SensitiveItem.into(),
+                StatusCode::CONFLICT,
+                "sensitive_item",
+            ),
+            (
+                MetadataError::NoProvider.into(),
+                StatusCode::CONFLICT,
+                "no_metadata_provider",
             ),
             (
                 DatabaseError::EntryNotFound.into(),

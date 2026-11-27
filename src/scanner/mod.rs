@@ -4,7 +4,6 @@ pub mod epub_package;
 pub mod folder_scanner;
 pub mod folder_watch;
 pub mod heartbeat;
-pub mod metadata_fetcher;
 pub mod scan_jobs;
 
 use std::sync::{Mutex, MutexGuard, PoisonError};

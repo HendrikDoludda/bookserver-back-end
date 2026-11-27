@@ -4,6 +4,7 @@ pub mod config;
 pub mod data_models;
 pub mod database_related_scripts;
 pub mod error_types;
+pub mod metadata;
 pub mod routes;
 pub mod scanner;
 pub mod stream_reader;
