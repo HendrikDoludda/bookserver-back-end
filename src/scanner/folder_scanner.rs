@@ -932,7 +932,7 @@ fn folder_fingerprint(folder: &Path) -> Option<String> {
 
 /// The key a series is found by: `title` lowercased, then composed — every letter with an accent
 /// as one character.
-fn match_key(title: &str) -> String {
+pub(crate) fn match_key(title: &str) -> String {
     // Lowercased in Rust, which knows every alphabet: "ÄRGER v02" finds "Ärger". Composed because
     // older macOS disks store "ä" as "a" and an accent mark — last, as lowercasing may undo it.
     title.to_lowercase().nfc().collect()

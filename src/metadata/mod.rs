@@ -6,15 +6,21 @@ mod http;
 mod plain_text;
 mod rate_limit;
 
-use std::time::Duration;
+use std::{
+    future::Future,
+    sync::Arc,
+    time::{Duration, SystemTime},
+};
 
 use rusqlite::Connection;
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 use crate::{
-    db::Database,
+    database_related_scripts::db_metadata,
+    db::{convert_system_time_to_unix_time, Database},
     error_types::{AppErrors, MetadataError},
     models::{BookSeriesMetadata, LibraryType},
+    scanner::folder_scanner::match_key,
 };
 use http::Endpoint;
 
@@ -166,8 +172,38 @@ impl MetadataProviders {
         }
     }
 
-    /// The candidates the series' provider finds for `query`, best first.
+    /// The candidates the series' provider finds for `query`, best first: the answer it gave the
+    /// same search within 30 days before `now`, else its answer now, which is kept.
     pub async fn search(
+        &self,
+        db: &Arc<Database>,
+        series: &ClearedSeries,
+        query: &str,
+        caller: Caller,
+        now: SystemTime,
+    ) -> Result<Vec<Candidate>, AppErrors> {
+        // Normalised as a title's match key, so "Berserk" and " berserk" share one answer.
+        let key = request_key(series, "search", &match_key(query.trim()));
+        let ask = self.search_online(series, query, caller);
+        cached(db, series.provider(), key, now, ask).await
+    }
+
+    /// The series' provider's entry `external_id`: as it answered within 30 days before `now`,
+    /// else as it answers now, which is kept.
+    pub async fn fetch(
+        &self,
+        db: &Arc<Database>,
+        series: &ClearedSeries,
+        external_id: &str,
+        caller: Caller,
+        now: SystemTime,
+    ) -> Result<Candidate, AppErrors> {
+        let key = request_key(series, "entry", external_id);
+        let ask = self.fetch_online(series, external_id, caller);
+        cached(db, series.provider(), key, now, ask).await
+    }
+
+    async fn search_online(
         &self,
         series: &ClearedSeries,
         query: &str,
@@ -180,8 +216,7 @@ impl MetadataProviders {
         }
     }
 
-    /// The series' provider's entry `external_id`.
-    pub async fn fetch(
+    async fn fetch_online(
         &self,
         series: &ClearedSeries,
         external_id: &str,
@@ -195,11 +230,67 @@ impl MetadataProviders {
     }
 }
 
+/// The key a lookup's answer is kept under: what was asked — `kind` — and `detail`. A lookup that
+/// includes adult entries has keys of its own, as its answers differ.
+fn request_key(series: &ClearedSeries, kind: &str, detail: &str) -> String {
+    let adult = if series.includes_adult() {
+        "+adult"
+    } else {
+        ""
+    };
+    format!("{kind}{adult}:{detail}")
+}
+
+/// The answer `provider` gave to `key` within 30 days before `now`; else `ask`'s, which is kept.
+/// A failure isn't kept, so the next lookup asks again.
+async fn cached<T>(
+    db: &Arc<Database>,
+    provider: MetadataProvider,
+    key: String,
+    now: SystemTime,
+    ask: impl Future<Output = Result<T, MetadataError>>,
+) -> Result<T, AppErrors>
+where
+    T: Serialize + DeserializeOwned,
+{
+    let now = convert_system_time_to_unix_time(now);
+    let read_key = key.clone();
+    let kept = Arc::clone(db)
+        .read(move |conn| Ok(db_metadata::fresh(conn, provider, &read_key, now)?))
+        .await?;
+    if let Some(json) = kept {
+        match serde_json::from_str(&json) {
+            Ok(answer) => return Ok(answer),
+            // Kept by an older version, whose answers had another shape.
+            Err(err) => tracing::warn!(
+                "The kept answer to {key} can't be read, so it is asked again: {err}"
+            ),
+        }
+    }
+
+    let answer = ask.await?;
+    match serde_json::to_string(&answer) {
+        Ok(json) => {
+            Arc::clone(db)
+                .transact(move |conn| Ok(db_metadata::keep(conn, provider, &key, &json, now)?))
+                .await?
+        }
+        Err(err) => tracing::error!("The answer to {key} can't be kept: {err}"),
+    }
+    Ok(answer)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{error_types::DatabaseError, test_support::memory_connection};
+    use crate::{
+        database_related_scripts::db_metadata::LIFETIME_SECONDS,
+        error_types::DatabaseError,
+        test_support::{memory_connection, ProviderStub, TempDatabase},
+    };
+    use axum::http::StatusCode;
     use rusqlite::params;
+    use std::time::UNIX_EPOCH;
 
     fn library(conn: &Connection, library_type: &str, sensitive: bool) -> i64 {
         conn.execute(
@@ -345,5 +436,163 @@ mod tests {
             refusal(clear(&conn, 42)),
             AppErrors::Database(DatabaseError::EntryNotFound)
         ));
+    }
+
+    const SEARCH_ANSWER: &str =
+        r#"{"data":{"Page":{"media":[{"id":30002,"title":{"romaji":"Berserk"}}]}}}"#;
+    const ENTRY_ANSWER: &str = r#"{"data":{"Media":{"id":30002,"title":{"romaji":"Berserk"}}}}"#;
+    const T: u64 = 1_800_000_000;
+
+    fn at(seconds: u64) -> SystemTime {
+        UNIX_EPOCH + Duration::from_secs(seconds)
+    }
+
+    /// A series in a manga library of `temp`, cleared as every lookup's series is.
+    fn cleared_in(temp: &TempDatabase, includes_adult: bool) -> ClearedSeries {
+        temp.db
+            .setup_new_transaction(|conn| {
+                let manga = library(conn, "manga", false);
+                conn.execute(
+                    "UPDATE library SET adult_metadata = ?1 WHERE id = ?2",
+                    params![includes_adult, manga],
+                )
+                .unwrap();
+                let berserk = series(conn, "Berserk", false, &[manga]);
+                clear(conn, berserk)
+            })
+            .unwrap()
+    }
+
+    /// Every kept answer: its key, its response and when it was fetched.
+    fn kept(temp: &TempDatabase) -> Vec<(String, String, i64)> {
+        temp.db
+            .read_now(|conn| {
+                Ok(conn
+                    .prepare(
+                        "SELECT request_key, response, fetched_at FROM metadata_cache \
+                         ORDER BY request_key",
+                    )
+                    .unwrap()
+                    .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+                    .unwrap()
+                    .collect::<Result<_, _>>()
+                    .unwrap())
+            })
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_search_asked_again_within_30_days_is_answered_from_the_cache() {
+        let temp = TempDatabase::open();
+        let stub = ProviderStub::answering(StatusCode::OK, &[], SEARCH_ANSWER).await;
+        let providers = MetadataProviders::at(&stub.url, Duration::from_secs(5));
+        let berserk = cleared_in(&temp, false);
+        let search = |query: &'static str, now| {
+            providers.search(&temp.db, &berserk, query, Caller::Admin, now)
+        };
+
+        let first = search("Berserk", at(T)).await.unwrap();
+        let again = search(" BERSERK ", at(T + LIFETIME_SECONDS as u64 - 1))
+            .await
+            .unwrap();
+
+        assert_eq!(stub.requests().len(), 1, "the second came from the cache");
+        assert_eq!(again, first);
+        assert_eq!(first[0].external_id, "30002");
+        assert_eq!(kept(&temp)[0].0, "search:berserk");
+
+        search("Berserk", at(T + LIFETIME_SECONDS as u64))
+            .await
+            .unwrap();
+
+        assert_eq!(stub.requests().len(), 2, "30 days on, it is asked again");
+        let kept = kept(&temp);
+        assert_eq!(kept.len(), 1, "and replaces the old answer");
+        assert_eq!(kept[0].2, (T + LIFETIME_SECONDS as u64) as i64);
+    }
+
+    #[tokio::test]
+    async fn an_entry_is_kept_by_its_id_and_a_failure_is_not_kept() {
+        let temp = TempDatabase::open();
+        let found = ProviderStub::answering(StatusCode::OK, &[], ENTRY_ANSWER).await;
+        let berserk = cleared_in(&temp, false);
+        let providers = MetadataProviders::at(&found.url, Duration::from_secs(5));
+        for _ in 0..2 {
+            let entry = providers
+                .fetch(&temp.db, &berserk, "30002", Caller::Admin, at(T))
+                .await
+                .unwrap();
+            assert_eq!(entry.title, "Berserk");
+        }
+        assert_eq!(found.requests().len(), 1);
+
+        let missing =
+            ProviderStub::answering(StatusCode::NOT_FOUND, &[], r#"{"data":{"Media":null}}"#).await;
+        let providers = MetadataProviders::at(&missing.url, Duration::from_secs(5));
+        for _ in 0..2 {
+            let result = providers
+                .fetch(&temp.db, &berserk, "1", Caller::Admin, at(T))
+                .await;
+            assert!(matches!(
+                result,
+                Err(AppErrors::Metadata(MetadataError::CandidateNotFound))
+            ));
+        }
+        assert_eq!(missing.requests().len(), 2, "asked again each time");
+        let keys: Vec<String> = kept(&temp).into_iter().map(|row| row.0).collect();
+        assert_eq!(keys, ["entry:30002"]);
+    }
+
+    #[tokio::test]
+    async fn a_lookup_that_includes_adult_entries_keeps_answers_of_its_own() {
+        let temp = TempDatabase::open();
+        let stub = ProviderStub::answering(StatusCode::OK, &[], SEARCH_ANSWER).await;
+        let providers = MetadataProviders::at(&stub.url, Duration::from_secs(5));
+
+        for includes_adult in [false, true] {
+            let series = cleared_in(&temp, includes_adult);
+            providers
+                .search(&temp.db, &series, "Berserk", Caller::Admin, at(T))
+                .await
+                .unwrap();
+        }
+
+        assert_eq!(stub.requests().len(), 2);
+        let keys: Vec<String> = kept(&temp).into_iter().map(|row| row.0).collect();
+        assert_eq!(keys, ["search+adult:berserk", "search:berserk"]);
+    }
+
+    #[tokio::test]
+    async fn a_kept_answer_that_cannot_be_read_is_asked_again_and_replaced() {
+        let temp = TempDatabase::open();
+        let stub = ProviderStub::answering(StatusCode::OK, &[], SEARCH_ANSWER).await;
+        let providers = MetadataProviders::at(&stub.url, Duration::from_secs(5));
+        let berserk = cleared_in(&temp, false);
+        temp.db
+            .setup_new_transaction(|conn| {
+                Ok(db_metadata::keep(
+                    conn,
+                    MetadataProvider::AniList,
+                    "search:berserk",
+                    r#"[{"id":"an older shape"}]"#,
+                    T as i64,
+                )?)
+            })
+            .unwrap();
+
+        let found = providers
+            .search(&temp.db, &berserk, "Berserk", Caller::Admin, at(T))
+            .await
+            .unwrap();
+
+        assert_eq!(found[0].title, "Berserk");
+        assert_eq!(stub.requests().len(), 1);
+        let kept = kept(&temp);
+        assert_eq!(kept.len(), 1);
+        assert!(
+            kept[0].1.contains("\"external_id\":\"30002\""),
+            "{}",
+            kept[0].1
+        );
     }
 }

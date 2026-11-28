@@ -7,10 +7,10 @@ use crate::{
     },
     error_types::DatabaseError,
     models::{
-        BookDatabaseColumns, BookMetadata, BookSeriesMetadata, Comparison, LibraryDatabaseColumns,
-        LibraryMetadata, QuerySeparator, RecoveryCodes, RecoveryCodesColumns,
-        SeriesDatabaseColumns, Sessions, SessionsDatabaseColumns, TOTPDatabaseColumns,
-        UserDatabaseColumns, UserMetadata, TOTP,
+        BookDatabaseColumns, BookMetadata, BookSeriesMetadata, CachedAnswer, CachedAnswerColumns,
+        Comparison, LibraryDatabaseColumns, LibraryMetadata, QuerySeparator, RecoveryCodes,
+        RecoveryCodesColumns, SeriesDatabaseColumns, Sessions, SessionsDatabaseColumns,
+        TOTPDatabaseColumns, UserDatabaseColumns, UserMetadata, TOTP,
     },
 };
 
@@ -83,6 +83,11 @@ impl Delete for Sessions {
 impl Delete for RecoveryCodes {
     type Column = RecoveryCodesColumns;
     const TABLE: &'static str = "recovery_codes";
+}
+
+impl Delete for CachedAnswer {
+    type Column = CachedAnswerColumns;
+    const TABLE: &'static str = "metadata_cache";
 }
 
 impl Delete for TOTP {

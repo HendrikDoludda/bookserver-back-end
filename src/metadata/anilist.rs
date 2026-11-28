@@ -440,7 +440,7 @@ mod tests {
         let query = r#"Berserk" } } query { Viewer { id } } #"#;
 
         providers_at(&stub)
-            .search(&cleared(false), query, Caller::Admin)
+            .search_online(&cleared(false), query, Caller::Admin)
             .await
             .unwrap();
 
@@ -459,7 +459,7 @@ mod tests {
         let stub = ProviderStub::answering(Status::OK, &[], SEARCH_ANSWER).await;
 
         let candidates = providers_at(&stub)
-            .search(&cleared(false), "Berserk", Caller::Admin)
+            .search_online(&cleared(false), "Berserk", Caller::Admin)
             .await
             .unwrap();
 
@@ -511,7 +511,7 @@ mod tests {
         let stub = ProviderStub::answering(Status::OK, &[], SEARCH_ANSWER).await;
 
         let candidates = providers_at(&stub)
-            .search(&cleared(true), "Berserk", Caller::Admin)
+            .search_online(&cleared(true), "Berserk", Caller::Admin)
             .await
             .unwrap();
 
@@ -529,11 +529,11 @@ mod tests {
         let providers = providers_at(&stub);
 
         let candidate = providers
-            .fetch(&cleared(false), "30002", Caller::Admin)
+            .fetch_online(&cleared(false), "30002", Caller::Admin)
             .await
             .unwrap();
         providers
-            .fetch(&cleared(true), "0030002", Caller::BulkPass)
+            .fetch_online(&cleared(true), "0030002", Caller::BulkPass)
             .await
             .unwrap();
 
@@ -568,7 +568,7 @@ mod tests {
             let stub = ProviderStub::answering(status, &[], &answer).await;
 
             let result = providers_at(&stub)
-                .fetch(&cleared(false), "116671", Caller::Admin)
+                .fetch_online(&cleared(false), "116671", Caller::Admin)
                 .await;
 
             assert!(
@@ -598,7 +598,7 @@ mod tests {
             "2147483648",
         ] {
             let result = providers
-                .fetch(&cleared(false), refused, Caller::Admin)
+                .fetch_online(&cleared(false), refused, Caller::Admin)
                 .await;
             assert!(
                 matches!(result, Err(MetadataError::InvalidExternalId)),
@@ -619,8 +619,12 @@ mod tests {
         let providers = providers_at(&stub);
         let series = cleared(false);
 
-        let first = providers.search(&series, "Berserk", Caller::Admin).await;
-        let second = providers.fetch(&series, "30002", Caller::Admin).await;
+        let first = providers
+            .search_online(&series, "Berserk", Caller::Admin)
+            .await;
+        let second = providers
+            .fetch_online(&series, "30002", Caller::Admin)
+            .await;
 
         assert!(matches!(
             first,
@@ -657,7 +661,7 @@ mod tests {
             let stub = ProviderStub::answering(status, &[], answer).await;
 
             let result = providers_at(&stub)
-                .search(&cleared(false), "Berserk", Caller::Admin)
+                .search_online(&cleared(false), "Berserk", Caller::Admin)
                 .await;
 
             assert!(
@@ -679,7 +683,7 @@ mod tests {
         .await;
 
         let result = providers_at(&stub)
-            .search(&cleared(false), "Berserk", Caller::Admin)
+            .search_online(&cleared(false), "Berserk", Caller::Admin)
             .await;
 
         assert!(matches!(result, Err(MetadataError::ProviderUnavailable)));
@@ -693,14 +697,14 @@ mod tests {
             Duration::from_secs(5),
         );
         let result = nowhere
-            .search(&cleared(false), "Berserk", Caller::Admin)
+            .search_online(&cleared(false), "Berserk", Caller::Admin)
             .await;
         assert!(matches!(result, Err(MetadataError::ProviderUnavailable)));
 
         let silent = ProviderStub::silent().await;
         let start = Instant::now();
         let result = MetadataProviders::at(&silent.url, Duration::from_millis(300))
-            .search(&cleared(false), "Berserk", Caller::Admin)
+            .search_online(&cleared(false), "Berserk", Caller::Admin)
             .await;
         assert!(matches!(result, Err(MetadataError::ProviderUnavailable)));
         assert!(

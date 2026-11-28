@@ -7,7 +7,7 @@ use rusqlite::{
 };
 
 use crate::models::{
-    BookFormat, BookLanguage, BookMetadata, BookSeriesMetadata, Directory, EmailCode,
+    BookFormat, BookLanguage, BookMetadata, BookSeriesMetadata, CachedAnswer, Directory, EmailCode,
     LibraryMetadata, LibraryType, LoginChallenge, RecoveryCodes, Sessions, UserMetadata,
     UserSettings, TOTP,
 };
@@ -82,6 +82,17 @@ impl FromRow for BookSeriesMetadata {
             start_release_year: row.get("start_release_year")?,
             end_release_year: row.get("end_release_year")?,
             is_sensitive: row.get("is_sensitive")?,
+        })
+    }
+}
+
+impl FromRow for CachedAnswer {
+    fn from_row(row: &Row) -> rusqlite::Result<Self> {
+        Ok(Self {
+            provider: row.get("provider")?,
+            request_key: row.get("request_key")?,
+            response: row.get("response")?,
+            fetched_at: read_time(row, "fetched_at")?,
         })
     }
 }

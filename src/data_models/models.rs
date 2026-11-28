@@ -493,6 +493,29 @@ impl AsRef<str> for LibraryDatabaseColumns {
     }
 }
 
+// === Metadata cache ==========================================================
+/// A metadata provider's answer to one request, kept in `metadata_cache` so it isn't asked again.
+#[derive(Debug, Clone)]
+pub struct CachedAnswer {
+    pub provider: String,
+    pub request_key: String,
+    /// The JSON of what the lookup answered.
+    pub response: String,
+    pub fetched_at: SystemTime,
+}
+
+pub enum CachedAnswerColumns {
+    FetchedAt,
+}
+
+impl AsRef<str> for CachedAnswerColumns {
+    fn as_ref(&self) -> &str {
+        match self {
+            CachedAnswerColumns::FetchedAt => "fetched_at",
+        }
+    }
+}
+
 // === Scanned directory model =================================================
 /// A folder the scanner reads.
 #[derive(Debug, Clone, Serialize, Deserialize)]
