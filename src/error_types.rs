@@ -446,6 +446,14 @@ pub enum MetadataError {
     SensitiveItem,
     #[error("None of the series' libraries is of a type a metadata provider covers")]
     NoProvider,
+    #[error("The external id is not in the form its provider uses")]
+    InvalidExternalId,
+    #[error("The provider has no such entry, or none the series may be matched to")]
+    CandidateNotFound,
+    #[error("The provider's next turn is {retry_after:?} away")]
+    RateLimited { retry_after: Duration },
+    #[error("The provider could not be reached, or its answer could not be read")]
+    ProviderUnavailable,
 }
 
 impl MetadataError {
@@ -453,6 +461,12 @@ impl MetadataError {
         match self {
             MetadataError::SensitiveItem => (StatusCode::CONFLICT, "sensitive_item"),
             MetadataError::NoProvider => (StatusCode::CONFLICT, "no_metadata_provider"),
+            MetadataError::InvalidExternalId => (StatusCode::BAD_REQUEST, "invalid_external_id"),
+            MetadataError::CandidateNotFound => (StatusCode::NOT_FOUND, "candidate_not_found"),
+            MetadataError::RateLimited { .. } => {
+                (StatusCode::SERVICE_UNAVAILABLE, "provider_rate_limited")
+            }
+            MetadataError::ProviderUnavailable => (StatusCode::BAD_GATEWAY, "provider_unavailable"),
         }
     }
 }
@@ -557,14 +571,21 @@ impl AppErrors {
             AppErrors::InvalidRequest => (StatusCode::BAD_REQUEST, "invalid_request"),
         }
     }
+
+    /// How long the client should wait before it tries again, sent as `Retry-After`.
+    fn retry_after(&self) -> Option<Duration> {
+        match self {
+            AppErrors::Authentication(AuthenticationError::TooManyAttempts { retry_after })
+            | AppErrors::Metadata(MetadataError::RateLimited { retry_after }) => Some(*retry_after),
+            _ => None,
+        }
+    }
 }
 
 impl IntoResponse for AppErrors {
     fn into_response(self) -> Response<Body> {
         let mut response = respond(self.status_and_key(), &self);
-        if let AppErrors::Authentication(AuthenticationError::TooManyAttempts { retry_after }) =
-            self
-        {
+        if let Some(retry_after) = self.retry_after() {
             response.headers_mut().insert(
                 RETRY_AFTER,
                 HeaderValue::from(whole_seconds_rounded_up(retry_after)),
@@ -793,6 +814,29 @@ mod tests {
                 "no_metadata_provider",
             ),
             (
+                MetadataError::InvalidExternalId.into(),
+                StatusCode::BAD_REQUEST,
+                "invalid_external_id",
+            ),
+            (
+                MetadataError::CandidateNotFound.into(),
+                StatusCode::NOT_FOUND,
+                "candidate_not_found",
+            ),
+            (
+                MetadataError::RateLimited {
+                    retry_after: Duration::from_secs(30),
+                }
+                .into(),
+                StatusCode::SERVICE_UNAVAILABLE,
+                "provider_rate_limited",
+            ),
+            (
+                MetadataError::ProviderUnavailable.into(),
+                StatusCode::BAD_GATEWAY,
+                "provider_unavailable",
+            ),
+            (
                 DatabaseError::EntryNotFound.into(),
                 StatusCode::NOT_FOUND,
                 "not_found",
@@ -906,6 +950,26 @@ mod tests {
         assert!(
             !other.into_response().headers().contains_key(RETRY_AFTER),
             "only a 429 says when to retry"
+        );
+    }
+
+    #[test]
+    fn a_rate_limited_provider_answers_503_with_its_wait_in_whole_seconds_rounded_up() {
+        let error: AppErrors = MetadataError::RateLimited {
+            retry_after: Duration::from_millis(29_200),
+        }
+        .into();
+        let response = error.into_response();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(response.headers()[RETRY_AFTER], "30");
+
+        let unavailable: AppErrors = MetadataError::ProviderUnavailable.into();
+        assert!(
+            !unavailable
+                .into_response()
+                .headers()
+                .contains_key(RETRY_AFTER),
+            "a provider that is down names no time"
         );
     }
 

@@ -1,7 +1,7 @@
 //! The state every handler can reach. A handler asks for just the part it needs —
 //! `State<Arc<Database>>`, `State<Mailer>`, `State<SetupCode>`, `State<TotpCipher>`,
-//! `State<Covers>`, `State<ScanJobs>` or `State<FolderWatch>` — and the `FromRef` impls hand it
-//! over.
+//! `State<Covers>`, `State<ScanJobs>`, `State<FolderWatch>` or `State<MetadataProviders>` — and
+//! the `FromRef` impls hand it over.
 
 use std::sync::Arc;
 
@@ -9,6 +9,7 @@ use axum::extract::FromRef;
 
 use crate::{
     db::Database,
+    metadata::MetadataProviders,
     routes::{email_helper::Mailer, registration::SetupCode, totp_cipher::TotpCipher},
     scanner::{cover_image_retriever::Covers, folder_watch::FolderWatch, scan_jobs::ScanJobs},
 };
@@ -22,6 +23,7 @@ pub struct AppState {
     pub covers: Covers,
     pub scans: ScanJobs,
     pub watch: FolderWatch,
+    pub metadata: MetadataProviders,
 }
 
 impl FromRef<AppState> for Arc<Database> {
@@ -63,5 +65,11 @@ impl FromRef<AppState> for ScanJobs {
 impl FromRef<AppState> for FolderWatch {
     fn from_ref(state: &AppState) -> Self {
         state.watch.clone()
+    }
+}
+
+impl FromRef<AppState> for MetadataProviders {
+    fn from_ref(state: &AppState) -> Self {
+        state.metadata.clone()
     }
 }

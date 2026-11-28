@@ -1,13 +1,25 @@
-//! Metadata from online providers: which provider describes a series, and the gate every lookup
-//! passes.
+//! Metadata from online providers: which provider describes a series, the gate every lookup
+//! passes, and the lookups themselves.
+
+mod anilist;
+mod http;
+mod plain_text;
+mod rate_limit;
+
+use std::time::Duration;
 
 use rusqlite::Connection;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     db::Database,
     error_types::{AppErrors, MetadataError},
     models::{BookSeriesMetadata, LibraryType},
 };
+use http::Endpoint;
+
+/// An admin's request answers within this, waited or not; an app gives up not much later.
+const ADMIN_WAIT: Duration = Duration::from_secs(10);
 
 /// An online source of series metadata.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -86,6 +98,101 @@ pub fn clear(conn: &Connection, series_id: i64) -> Result<ClearedSeries, AppErro
         provider,
         includes_adult: Database::series_adult_metadata_with_connection(conn, series_id)?,
     })
+}
+
+/// One entry a provider answered, in the shape every provider's entries take.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Candidate {
+    /// The provider's id of the entry, as text: each provider has its own kind of id.
+    pub external_id: String,
+    pub title: String,
+    /// Its other titles — other languages and scripts, and synonyms.
+    pub alternative_titles: Vec<String>,
+    pub start_year: Option<i64>,
+    pub end_year: Option<i64>,
+    /// Plain text: no markup, and no spoilers where the provider marks them.
+    pub description: Option<String>,
+    pub cover_url: Option<String>,
+    pub authors: Vec<String>,
+    pub tags: Vec<String>,
+}
+
+/// Who waits for a provider's turn, which says how long.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Caller {
+    /// An admin's request: it waits at most `ADMIN_WAIT`, else answers `RateLimited`.
+    Admin,
+    /// The bulk pass: it waits as long as the provider asks.
+    BulkPass,
+}
+
+impl Caller {
+    fn max_wait(self) -> Option<Duration> {
+        match self {
+            Caller::Admin => Some(ADMIN_WAIT),
+            Caller::BulkPass => None,
+        }
+    }
+}
+
+/// Every provider, reached through one HTTP client, each at its own pace. Clones share the
+/// client and the providers' turns.
+#[derive(Debug, Clone)]
+pub struct MetadataProviders {
+    anilist: Endpoint,
+}
+
+impl MetadataProviders {
+    /// The providers at their own addresses.
+    pub fn new() -> reqwest::Result<Self> {
+        let client = http::client(http::TIMEOUT)?;
+        Ok(MetadataProviders {
+            anilist: Endpoint::new(
+                MetadataProvider::AniList,
+                anilist::URL,
+                client,
+                anilist::INTERVAL,
+            ),
+        })
+    }
+
+    /// Every provider at `url` — a test's stand-in — with no pause between requests, each given
+    /// up on after `timeout`.
+    #[cfg(test)]
+    pub fn at(url: &str, timeout: Duration) -> Self {
+        let client = http::client(timeout).expect("build the HTTP client");
+        MetadataProviders {
+            anilist: Endpoint::new(MetadataProvider::AniList, url, client, Duration::ZERO),
+        }
+    }
+
+    /// The candidates the series' provider finds for `query`, best first.
+    pub async fn search(
+        &self,
+        series: &ClearedSeries,
+        query: &str,
+        caller: Caller,
+    ) -> Result<Vec<Candidate>, MetadataError> {
+        match series.provider() {
+            MetadataProvider::AniList => {
+                anilist::search(&self.anilist, series, query, caller).await
+            }
+        }
+    }
+
+    /// The series' provider's entry `external_id`.
+    pub async fn fetch(
+        &self,
+        series: &ClearedSeries,
+        external_id: &str,
+        caller: Caller,
+    ) -> Result<Candidate, MetadataError> {
+        match series.provider() {
+            MetadataProvider::AniList => {
+                anilist::fetch(&self.anilist, series, external_id, caller).await
+            }
+        }
+    }
 }
 
 #[cfg(test)]

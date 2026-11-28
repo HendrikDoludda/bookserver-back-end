@@ -5,10 +5,18 @@ use std::{
     io::{Cursor, Write},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
+    time::Duration,
 };
 
+use axum::{
+    body::Bytes,
+    http::{HeaderName, HeaderValue, StatusCode},
+    response::{IntoResponse, Response},
+    Router,
+};
 use image::{DynamicImage, ImageFormat};
 use rusqlite::{params, Connection};
+use serde_json::Value;
 use uuid::Uuid;
 use zip::{write::SimpleFileOptions, ZipWriter};
 
@@ -18,6 +26,7 @@ use crate::{
         db::{configure, Database},
         migrations, translation_seed,
     },
+    metadata::MetadataProviders,
     models::{EmailConfig, SmtpTls},
     routes::{
         email_helper::{EmailInformation, Mailer},
@@ -146,17 +155,20 @@ impl Write for LogBuffer {
     }
 }
 
-/// A mailer whose SMTP server refuses every connection, for the paths where sending fails.
-pub fn unreachable_mailer() -> Mailer {
-    // Bind and release a port, so nothing is listening on it.
-    let port = std::net::TcpListener::bind("127.0.0.1:0")
+/// A local port nothing listens on: bound and released at once.
+pub fn unused_port() -> u16 {
+    std::net::TcpListener::bind("127.0.0.1:0")
         .expect("bind a free port")
         .local_addr()
         .expect("read the port")
-        .port();
+        .port()
+}
+
+/// A mailer whose SMTP server refuses every connection, for the paths where sending fails.
+pub fn unreachable_mailer() -> Mailer {
     Mailer::from_config(Some(EmailConfig {
         host: "127.0.0.1".to_string(),
-        port,
+        port: unused_port(),
         tls: SmtpTls::Off,
         credentials: None,
         from: "server@example.com".to_string(),
@@ -194,7 +206,8 @@ impl TempDatabase {
 
     /// Router state on this database, with the given mailer, `TEST_SETUP_CODE`,
     /// `test_cipher()`, [`TempDatabase::covers`] as the cover folder, without PDFium, a scan
-    /// worker of its own, and no directory watched.
+    /// worker of its own, no directory watched, and metadata providers at a port nothing listens
+    /// on — a test that looks something up gives its own.
     pub fn state(&self, mailer: Mailer) -> AppState {
         let covers = Covers::in_folder(self.covers.path(), None).expect("make the cover folder");
         AppState {
@@ -205,7 +218,94 @@ impl TempDatabase {
             scans: ScanJobs::start(Arc::clone(&self.db), covers.clone()),
             covers,
             watch: FolderWatch::off(),
+            metadata: MetadataProviders::at(
+                &format!("http://127.0.0.1:{}", unused_port()),
+                Duration::from_secs(5),
+            ),
         }
+    }
+}
+
+/// A metadata provider's stand-in on a local port: it answers every request alike, and keeps each
+/// one's JSON body in order.
+pub struct ProviderStub {
+    pub url: String,
+    requests: Arc<Mutex<Vec<Value>>>,
+}
+
+#[derive(Clone)]
+enum StubReply {
+    Answer {
+        status: StatusCode,
+        headers: Vec<(HeaderName, HeaderValue)>,
+        body: String,
+    },
+    Never,
+}
+
+impl ProviderStub {
+    /// Answers `status`, with `headers` (names in lowercase) and `body`.
+    pub async fn answering(
+        status: StatusCode,
+        headers: &[(&'static str, &str)],
+        body: &str,
+    ) -> Self {
+        let headers = headers
+            .iter()
+            .map(|(name, value)| {
+                (
+                    HeaderName::from_static(name),
+                    HeaderValue::from_str(value).expect("a header value"),
+                )
+            })
+            .collect();
+        Self::start(StubReply::Answer {
+            status,
+            headers,
+            body: body.to_string(),
+        })
+        .await
+    }
+
+    /// Never answers: a request waits until the client gives up.
+    pub async fn silent() -> Self {
+        Self::start(StubReply::Never).await
+    }
+
+    /// The JSON body of each request so far, in order; `null` for one that wasn't JSON.
+    pub fn requests(&self) -> Vec<Value> {
+        self.requests.lock().unwrap().clone()
+    }
+
+    async fn start(reply: StubReply) -> Self {
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let kept = Arc::clone(&requests);
+        let app = Router::new().fallback(move |body: Bytes| {
+            let reply = reply.clone();
+            let kept = Arc::clone(&kept);
+            async move {
+                let request = serde_json::from_slice(&body).unwrap_or(Value::Null);
+                kept.lock().unwrap().push(request);
+                match reply {
+                    StubReply::Answer {
+                        status,
+                        headers,
+                        body,
+                    } => {
+                        let mut response = (status, body).into_response();
+                        response.headers_mut().extend(headers);
+                        response
+                    }
+                    StubReply::Never => std::future::pending::<Response>().await,
+                }
+            }
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind a local port");
+        let url = format!("http://{}", listener.local_addr().expect("read the port"));
+        tokio::spawn(async move { axum::serve(listener, app).await });
+        ProviderStub { url, requests }
     }
 }
 

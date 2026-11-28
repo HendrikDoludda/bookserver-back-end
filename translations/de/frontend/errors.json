@@ -1,4 +1,5 @@
 {
+  "candidate_not_found": "Diesen Eintrag gibt es in der Online-Quelle nicht.",
   "directory_not_found": "Unter diesem Pfad gibt es auf dem Server keinen Ordner.",
   "directory_overlaps": "Dieser Ordner liegt in einem Ordner, den der Server schon verwendet, oder enthält einen.",
   "directory_taken": "Dieser Ordner wurde schon hinzugefügt.",
@@ -11,6 +12,7 @@
   "incorrect_password": "Dein aktuelles Passwort ist falsch.",
   "internal_error": "Auf dem Server ist etwas schiefgegangen. Versuche es später noch einmal.",
   "invalid_email": "Das sieht nicht nach einer E-Mail-Adresse aus.",
+  "invalid_external_id": "Diese Eintragsnummer verwendet die Online-Quelle nicht.",
   "invalid_locale": "Diese Sprache ist nicht verfügbar.",
   "invalid_name": "Ein Name braucht 1 bis 200 Zeichen.",
   "invalid_or_expired_code": "Dieser Code ist falsch oder abgelaufen.",
@@ -28,6 +30,8 @@
   "password_too_short": "Dieses Passwort ist zu kurz.",
   "password_unchanged": "Das neue Passwort ist dasselbe wie das aktuelle.",
   "passwords_do_not_match": "Die Passwörter stimmen nicht überein.",
+  "provider_rate_limited": "Die Online-Quelle ist ausgelastet. Warte einen Moment und versuche es dann noch einmal.",
+  "provider_unavailable": "Die Online-Quelle ist gerade nicht erreichbar. Versuche es später noch einmal.",
   "scan_in_progress": "Ein Scan läuft bereits oder wartet. Versuche es noch einmal, wenn er fertig ist.",
   "sensitive_item": "Diese Serie ist als sensibel markiert und wird deshalb nie online nachgeschlagen.",
   "series_not_empty": "Diese Serie enthält noch Bücher und kann deshalb nicht gelöscht werden.",

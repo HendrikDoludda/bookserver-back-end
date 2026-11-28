@@ -3,6 +3,7 @@ use bookserver_backend::app_state::AppState;
 use bookserver_backend::config;
 use bookserver_backend::database_related_scripts::db_users;
 use bookserver_backend::db::Database;
+use bookserver_backend::metadata::MetadataProviders;
 use bookserver_backend::models::Directory;
 use bookserver_backend::models::SmtpTls;
 use bookserver_backend::routes::api_routes::start_server;
@@ -70,6 +71,9 @@ async fn main() -> anyhow::Result<()> {
             .map(|directory| (directory.id, PathBuf::from(directory.data.path))),
     );
 
+    let metadata = MetadataProviders::new()
+        .context("Failed to set up the HTTP client for the metadata providers")?;
+
     let state = AppState {
         db,
         mailer: Mailer::from_config(email),
@@ -78,6 +82,7 @@ async fn main() -> anyhow::Result<()> {
         covers,
         scans,
         watch,
+        metadata,
     };
 
     start_server(state, listen_address)
