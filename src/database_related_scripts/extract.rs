@@ -147,7 +147,7 @@ impl Extract for LibraryMetadata {
     const TABLE: &'static str = "library";
     const KEY: &'static str = "id";
     const COLUMNS: &'static str =
-        "id, library_name, library_type, cover_image, description, is_sensitive";
+        "id, library_name, library_type, cover_image, description, is_sensitive, adult_metadata";
 }
 
 impl Extract for UserMetadata {

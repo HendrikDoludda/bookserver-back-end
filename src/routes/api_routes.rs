@@ -396,6 +396,7 @@ mod tests {
                 "name": "/books",
                 "library_type": "books",
                 "description": null,
+                "adult_metadata": false,
                 "series_count": 1,
                 "book_count": 0,
                 "finished_count": 0,
@@ -497,6 +498,7 @@ mod tests {
                 "name": "Favourites",
                 "library_type": "comics",
                 "description": "Picked by hand",
+                "adult_metadata": false,
                 "series_count": 0,
             })
         );
@@ -512,8 +514,36 @@ mod tests {
                 "name": "Favourites",
                 "library_type": "books",
                 "description": null,
+                "adult_metadata": false,
                 "series_count": 0,
             })
+        );
+
+        let body = serde_json::json!({ "adult_metadata": true });
+        let (status, _, changed) = call(&app, authorized("PATCH", &uri, &admin, Some(body))).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(json(&changed)["adult_metadata"], true);
+        assert_eq!(json(&changed)["library_type"], "books", "nothing else");
+        for refused in [
+            serde_json::json!({ "adult_metadata": "yes" }),
+            serde_json::json!({ "adult_metadata": 1 }),
+        ] {
+            let (status, _, answer) = call(
+                &app,
+                authorized("PATCH", &uri, &admin, Some(refused.clone())),
+            )
+            .await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{refused}");
+            assert_eq!(
+                json(&answer),
+                serde_json::json!({ "error": "invalid_request" })
+            );
+        }
+        let (_, _, listed) = call(&app, authorized("GET", "/api/v1/libraries", &admin, None)).await;
+        assert_eq!(
+            json(&listed)[0]["adult_metadata"],
+            true,
+            "a refused change left it on"
         );
 
         let membership = format!("/api/v1/libraries/{library}/series/{berserk}");
@@ -1030,6 +1060,7 @@ mod tests {
                 "name": "Manga",
                 "library_type": "comics",
                 "description": null,
+                "adult_metadata": false,
                 "series_count": 1,
                 "book_count": 1,
                 "finished_count": 0,

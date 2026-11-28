@@ -15,6 +15,7 @@ pub struct LibrarySummary {
     pub name: String,
     pub library_type: LibraryType,
     pub description: Option<String>,
+    pub adult_metadata: bool,
     pub series_count: i64,
 }
 
@@ -24,6 +25,7 @@ impl LibrarySummary {
             name: library.name,
             library_type: library.library_type,
             description: library.description,
+            adult_metadata: library.adult_metadata,
             series_count,
         }
     }
@@ -86,6 +88,7 @@ pub struct LibraryChanges {
     pub library_type: Option<LibraryType>,
     #[serde(default, deserialize_with = "present")]
     pub description: Option<Option<String>>,
+    pub adult_metadata: Option<bool>,
 }
 
 /// `PATCH /api/v1/series/{id}`: a field left out stays as it is, and `null` clears the

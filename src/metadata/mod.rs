@@ -43,6 +43,7 @@ pub struct ClearedSeries {
     series_id: i64,
     name: String,
     provider: MetadataProvider,
+    includes_adult: bool,
 }
 
 impl ClearedSeries {
@@ -57,6 +58,12 @@ impl ClearedSeries {
 
     pub fn provider(&self) -> MetadataProvider {
         self.provider
+    }
+
+    /// Whether a lookup may answer entries its provider marks adult: one of the series' libraries
+    /// has `adult_metadata` on.
+    pub fn includes_adult(&self) -> bool {
+        self.includes_adult
     }
 }
 
@@ -77,6 +84,7 @@ pub fn clear(conn: &Connection, series_id: i64) -> Result<ClearedSeries, AppErro
         series_id,
         name: series.name,
         provider,
+        includes_adult: Database::series_adult_metadata_with_connection(conn, series_id)?,
     })
 }
 
@@ -143,6 +151,28 @@ mod tests {
 
         assert_eq!(cleared.series_id(), berserk);
         assert_eq!(cleared.name(), "Berserk");
+        assert_eq!(cleared.provider(), MetadataProvider::AniList);
+        assert!(
+            !cleared.includes_adult(),
+            "off unless a library turns it on"
+        );
+    }
+
+    #[test]
+    fn a_series_includes_adult_entries_when_one_of_its_libraries_has_them_on() {
+        let conn = memory_connection();
+        let manga = library(&conn, "manga", false);
+        let favourites = library(&conn, "others", false);
+        let berserk = series(&conn, "Berserk", false, &[manga, favourites]);
+        conn.execute(
+            "UPDATE library SET adult_metadata = 1 WHERE id = ?1",
+            [favourites],
+        )
+        .unwrap();
+
+        let cleared = clear(&conn, berserk).unwrap();
+
+        assert!(cleared.includes_adult());
         assert_eq!(cleared.provider(), MetadataProvider::AniList);
     }
 

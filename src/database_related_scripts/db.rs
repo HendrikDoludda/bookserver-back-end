@@ -839,6 +839,21 @@ impl Database {
         .ok_or(DatabaseError::EntryNotFound)
     }
 
+    /// Whether any library the series is in has `adult_metadata` on; `false` for a series in none.
+    pub fn series_adult_metadata_with_connection(
+        conn: &Connection,
+        series_id: i64,
+    ) -> Result<bool, DatabaseError> {
+        conn.query_row(
+            "SELECT EXISTS (SELECT 1 FROM library_elements \
+             JOIN library ON library.id = library_elements.library_id \
+             WHERE library_elements.series_id = ?1 AND library.adult_metadata)",
+            [series_id],
+            |row| row.get(0),
+        )
+        .map_err(logged("reading", "library", DatabaseError::QueryFailure))
+    }
+
     /// The type of each library the series is in, by library id; empty for a series in none.
     pub fn library_types_of_series_with_connection(
         conn: &Connection,
@@ -1310,6 +1325,33 @@ mod tests {
             Database::series_is_sensitive_with_connection(&conn, loose + 1),
             Err(DatabaseError::EntryNotFound)
         ));
+    }
+
+    #[test]
+    fn a_series_includes_adult_entries_when_any_of_its_libraries_does() {
+        let conn = memory_connection();
+        let plain = insert_library(&conn, "plain");
+        let adult = insert_library(&conn, "adult");
+        let only_plain = insert_series(&conn, "only plain");
+        let shared = insert_series(&conn, "shared");
+        let loose = insert_series(&conn, "loose");
+        for (library, series) in [(plain, only_plain), (plain, shared), (adult, shared)] {
+            link(&conn, library, series);
+        }
+        conn.execute(
+            "UPDATE library SET adult_metadata = 1 WHERE id = ?1",
+            [adult],
+        )
+        .unwrap();
+        // A sensitive flag is a different switch.
+        conn.execute("UPDATE library SET is_sensitive = 1 WHERE id = ?1", [plain])
+            .unwrap();
+        let includes_adult =
+            |id| Database::series_adult_metadata_with_connection(&conn, id).unwrap();
+
+        assert!(!includes_adult(only_plain), "its one library has it off");
+        assert!(includes_adult(shared), "one of its two libraries has it on");
+        assert!(!includes_adult(loose), "in no library");
     }
 
     #[test]

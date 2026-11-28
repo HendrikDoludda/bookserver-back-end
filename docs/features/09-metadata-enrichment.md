@@ -13,6 +13,7 @@ overrides that: its metadata is entered by hand ([66](66-manual-metadata-editing
 - [x] 2 h · Migration 0011: `is_sensitive` (`BOOLEAN NOT NULL DEFAULT FALSE`) on `library` and `series`, in both models' field, `Extract::COLUMNS`, `FromRow` and `Insert`; tables `series_metadata_sources` (series, provider, external id, matched by `auto` or `admin`, when) and `metadata_cache` [DB]
 - [x] 1 h · A series is sensitive when its own flag or any of its libraries' flag is set — one query [DB]
 - [x] 3 h · `src/metadata/`: `MetadataProvider`, one per library type through `provider_for` (Manga → AniList); `clear` is the only way to an adapter call — it refuses a sensitive series (`sensitive_item`) and picks the provider from the series' libraries (`no_metadata_provider`) [BE]
+- [x] 2 h · A library's `adult_metadata` toggle (migration 0012, off by default), set through `PATCH /libraries/{id}` and sent in every library answer; a series' lookups include entries a provider marks adult when any of its libraries has it on (`ClearedSeries::includes_adult`) [DB] [BE]
 - [ ] 1 h · Once a second provider exists: a series whose libraries' types have different providers answers 409 `ambiguous_metadata_provider` from `clear` — until then `clear` takes the first [BE]
 - [ ] 1 h · HTTP client: `reqwest` with `rustls`, as [52](52-packaging-and-deployment.md) will serve TLS; one client, no redirects, timeouts, capped bodies [BE]
 - [ ] 2 h · Each provider's documented rate limit (not one global number); a 429's `Retry-After` is honoured; an admin's request that would wait over 10 s answers 503 `provider_rate_limited` with `Retry-After` [BE]
@@ -29,3 +30,4 @@ overrides that: its metadata is entered by hand ([66](66-manual-metadata-editing
 - [ ] 2 h · Provider API keys in the database, encrypted with XChaCha20-Poly1305 under a key BLAKE3-derived from the signing key in `secrets.toml` (own context string, the provider's name as associated data, as `TotpCipher` does); write-only — an admin endpoint sets or replaces a key and answers only whether one is set; a key is never logged. Built with the first adapter that needs a key ([63](63-book-metadata.md), [65](65-comic-metadata.md)) [DB] [BE]
 - [ ] 4 h · Candidate list and confirm screen, reached from the admin's series form [FE]
 - [ ] 1 h · "Fetch metadata" on the admin's library form, starting the library's bulk pass [FE]
+- [ ] 0.5 h · "Search adult entries" switch on the admin's library form, editing only [FE]

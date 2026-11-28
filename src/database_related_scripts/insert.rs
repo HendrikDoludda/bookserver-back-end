@@ -103,14 +103,15 @@ impl Insert for BookSeriesMetadata {
 impl Insert for LibraryMetadata {
     fn insert(&self, conn: &Connection) -> Result<i64, DatabaseError> {
         let query = "INSERT INTO library (library_name, library_type, cover_image, description, \
-            is_sensitive) VALUES (?1, ?2, ?3, ?4, ?5)";
+            is_sensitive, adult_metadata) VALUES (?1, ?2, ?3, ?4, ?5, ?6)";
 
         let params = params![
             self.name.clone(),
             self.library_type.as_str(),
             self.cover_image.clone(),
             self.description.clone(),
-            self.is_sensitive
+            self.is_sensitive,
+            self.adult_metadata
         ];
 
         conn.execute(query, params).map_err(logged(
@@ -523,6 +524,7 @@ mod tests {
             cover_image: None,
             description: None,
             is_sensitive: false,
+            adult_metadata: false,
         };
         let curated = LibraryMetadata {
             name: "Favourites".to_string(),
@@ -530,6 +532,7 @@ mod tests {
             cover_image: Some("./cover_images/favourites.jpg".to_string()),
             description: Some("The best ones".to_string()),
             is_sensitive: true,
+            adult_metadata: true,
         };
         let scanned_id = Database::insert_with_connection(&conn, &scanned).unwrap();
         let curated_id = Database::insert_with_connection(&conn, &curated).unwrap();
@@ -541,6 +544,7 @@ mod tests {
         assert_eq!(stored.cover_image, None);
         assert_eq!(stored.description, None);
         assert!(!stored.is_sensitive);
+        assert!(!stored.adult_metadata);
 
         // The list endpoint's path: every row in one query, each with its id.
         let listed = Database::get_entries_batch_with_connection::<LibraryMetadata>(
@@ -562,6 +566,7 @@ mod tests {
         );
         assert_eq!(stored.description.as_deref(), Some("The best ones"));
         assert!(stored.is_sensitive);
+        assert!(stored.adult_metadata);
     }
 
     #[test]

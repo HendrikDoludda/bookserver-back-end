@@ -95,6 +95,7 @@ impl FromRow for LibraryMetadata {
             cover_image: row.get("cover_image")?,
             description: row.get("description")?,
             is_sensitive: row.get("is_sensitive")?,
+            adult_metadata: row.get("adult_metadata")?,
         })
     }
 }

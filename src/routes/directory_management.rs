@@ -192,6 +192,7 @@ fn store(
                 cover_image: None,
                 description: None,
                 is_sensitive: false,
+                adult_metadata: false,
             };
             Some(Database::insert_with_connection(conn, &library)?)
         }

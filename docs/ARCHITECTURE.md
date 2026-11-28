@@ -59,6 +59,7 @@
 ## Metadata
 - An online lookup takes a `ClearedSeries`, which only `clear` (`metadata/mod.rs`) makes: it refuses a series that is sensitive — by its own flag or any of its libraries' (`series_is_sensitive_with_connection`) — and nothing overrides that.
 - A series' provider follows from its libraries' types through `provider_for`, the one place that maps a type to a provider.
+- A lookup answers entries its provider marks adult only when `ClearedSeries::includes_adult` — one of the series' libraries has `adult_metadata` on; that switch is not sensitivity, which keeps a series offline altogether.
 
 ## Logging
 - Log with `tracing`; the `log` crate is not a dependency.

@@ -1186,6 +1186,7 @@ mod tests {
             cover_image: None,
             description: None,
             is_sensitive: false,
+            adult_metadata: false,
         })
         .unwrap()
     }

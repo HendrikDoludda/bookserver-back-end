@@ -47,6 +47,7 @@ pub async fn create_library(
         cover_image: None,
         description: new.description,
         is_sensitive: false,
+        adult_metadata: false,
     };
     db.transact(move |conn| {
         let id = Database::insert_with_connection(conn, &library)?;
@@ -69,8 +70,10 @@ pub async fn change_library(
         name,
         library_type,
         description,
+        adult_metadata,
     } = changes;
-    if name.is_none() && library_type.is_none() && description.is_none() {
+    if name.is_none() && library_type.is_none() && description.is_none() && adult_metadata.is_none()
+    {
         return Err(AppErrors::InvalidRequest);
     }
     let name = name.as_deref().map(checked_name).transpose()?;
@@ -92,6 +95,10 @@ pub async fn change_library(
         if let Some(description) = &description {
             columns.push(LibraryDatabaseColumns::Description);
             values.push(description);
+        }
+        if let Some(adult_metadata) = &adult_metadata {
+            columns.push(LibraryDatabaseColumns::AdultMetadata);
+            values.push(adult_metadata);
         }
         Database::update_multiple_values_with_connection::<LibraryMetadata>(
             conn, &columns, &values, library_id,
@@ -490,6 +497,7 @@ mod tests {
             name: name.map(String::from),
             library_type,
             description: description.map(|text| text.map(String::from)),
+            adult_metadata: None,
         }
     }
 
@@ -592,6 +600,43 @@ mod tests {
         let cleared = change(None, None, Some(None)).await.unwrap();
         assert_eq!(cleared.data.description, None);
         assert_eq!(cleared.data.name, "Manga & more");
+    }
+
+    #[tokio::test]
+    async fn a_new_library_searches_no_adult_entries_until_a_change_turns_it_on() {
+        let temp = TempDatabase::open();
+        let created = create_library(temp.db.clone(), new_library("Manga"))
+            .await
+            .unwrap();
+        assert!(!created.data.adult_metadata);
+        let toggle = |on| {
+            change_library(
+                temp.db.clone(),
+                created.id,
+                LibraryChanges {
+                    adult_metadata: Some(on),
+                    ..changes(None, None, None)
+                },
+            )
+        };
+
+        let on = toggle(true).await.unwrap();
+        assert!(on.data.adult_metadata);
+        assert_eq!(on.data.name, "Manga", "nothing else changes");
+        assert_eq!(on.data.description.as_deref(), Some("Picked by hand"));
+        let stored = temp.db.get_entry::<LibraryMetadata>(created.id).unwrap();
+        assert!(stored.adult_metadata);
+        assert!(!stored.is_sensitive, "a different switch");
+
+        let off = toggle(false).await.unwrap();
+        assert!(!off.data.adult_metadata);
+        assert!(
+            !temp
+                .db
+                .get_entry::<LibraryMetadata>(created.id)
+                .unwrap()
+                .adult_metadata
+        );
     }
 
     #[tokio::test]

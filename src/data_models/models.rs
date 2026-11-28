@@ -469,6 +469,8 @@ pub struct LibraryMetadata {
     pub description: Option<String>,
     /// None of its series is looked up online.
     pub is_sensitive: bool,
+    /// Online lookups of its series include entries a provider marks adult.
+    pub adult_metadata: bool,
 }
 
 pub enum LibraryDatabaseColumns {
@@ -476,6 +478,7 @@ pub enum LibraryDatabaseColumns {
     LibraryType,
     CoverImage,
     Description,
+    AdultMetadata,
 }
 
 impl AsRef<str> for LibraryDatabaseColumns {
@@ -485,6 +488,7 @@ impl AsRef<str> for LibraryDatabaseColumns {
             LibraryDatabaseColumns::LibraryType => "library_type",
             LibraryDatabaseColumns::CoverImage => "cover_image",
             LibraryDatabaseColumns::Description => "description",
+            LibraryDatabaseColumns::AdultMetadata => "adult_metadata",
         }
     }
 }

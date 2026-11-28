@@ -87,6 +87,12 @@ const MIGRATIONS: &[Migration] = &[
         sql: include_str!("../../migrations/0011_metadata_enrichment.sql"),
         step: None,
     },
+    Migration {
+        version: 12,
+        name: "adult_metadata",
+        sql: include_str!("../../migrations/0012_adult_metadata.sql"),
+        step: None,
+    },
 ];
 
 /// Migration 8: every series' match key composed (NFC), as the scanner now builds its keys.
@@ -365,6 +371,7 @@ mod tests {
             ("library", "library_name"),
             ("library", "library_type"),
             ("library", "is_sensitive"),
+            ("library", "adult_metadata"),
             ("series", "name"),
             ("series", "match_key"),
             ("series", "is_sensitive"),
@@ -1493,6 +1500,55 @@ mod tests {
             flag(table, 1).unwrap();
             assert!(flag(table, 2).is_err(), "{table} takes no 2");
         }
+    }
+
+    #[test]
+    fn a_database_of_the_eleventh_schema_keeps_its_libraries_none_of_them_searching_adult_entries()
+    {
+        let mut conn = Connection::open_in_memory().unwrap();
+        configure(&conn).unwrap();
+        // As a server of the eleventh schema left it.
+        for migration in &MIGRATIONS[..11] {
+            conn.execute_batch(migration.sql).unwrap();
+        }
+        conn.execute_batch(
+            "CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, \
+             applied_at INTEGER NOT NULL); \
+             INSERT INTO schema_migrations (version, applied_at) \
+             VALUES (1, 0), (2, 0), (3, 0), (4, 0), (5, 0), (6, 0), (7, 0), (8, 0), (9, 0), \
+             (10, 0), (11, 0); \
+             INSERT INTO library (library_name, library_type, is_sensitive) \
+             VALUES ('Manga', 'manga', 1);",
+        )
+        .unwrap();
+
+        run(&mut conn).unwrap();
+
+        assert!(applied(&conn, 12));
+        let library: (String, String, i64, i64) = conn
+            .query_row(
+                "SELECT library_name, library_type, is_sensitive, adult_metadata FROM library",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(library, ("Manga".to_string(), "manga".to_string(), 1, 0));
+    }
+
+    #[test]
+    fn a_library_searches_adult_entries_or_not_and_nothing_else() {
+        let conn = memory_connection();
+        let library = |value: i64| {
+            conn.execute(
+                "INSERT INTO library (library_name, library_type, adult_metadata) \
+                 VALUES ('Manga', 'manga', ?1)",
+                [value],
+            )
+        };
+
+        library(0).unwrap();
+        library(1).unwrap();
+        assert!(library(2).is_err(), "takes no 2");
     }
 
     #[test]
