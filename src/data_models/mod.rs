@@ -1,5 +1,6 @@
 pub mod authentication_model;
 pub mod books_model;
+pub mod metadata_model;
 pub mod models;
 pub mod scan_model;
 pub mod settings_model;

@@ -123,6 +123,17 @@ pub struct Candidate {
     pub tags: Vec<String>,
 }
 
+impl Candidate {
+    /// Whether its title or one of its other titles is `name`, as a series' match key normalises
+    /// both.
+    pub fn is_exact_match(&self, name: &str) -> bool {
+        let key = match_key(name.trim());
+        std::iter::once(&self.title)
+            .chain(&self.alternative_titles)
+            .any(|title| match_key(title.trim()) == key)
+    }
+}
+
 /// Who waits for a provider's turn, which says how long.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Caller {
@@ -436,6 +447,34 @@ mod tests {
             refusal(clear(&conn, 42)),
             AppErrors::Database(DatabaseError::EntryNotFound)
         ));
+    }
+
+    #[test]
+    fn a_candidate_matches_a_name_exactly_by_any_of_its_titles_ignoring_case_and_composition() {
+        let candidate = Candidate {
+            external_id: "53390".to_string(),
+            title: "Attack on Titan".to_string(),
+            alternative_titles: vec!["Shingeki no Kyojin".to_string(), "Ärger".to_string()],
+            start_year: None,
+            end_year: None,
+            description: None,
+            cover_url: None,
+            authors: vec![],
+            tags: vec![],
+        };
+
+        for name in [
+            "Attack on Titan",
+            " ATTACK ON TITAN ",
+            "shingeki no kyojin",
+            // "Ä" written as "A" and a combining diaeresis, as older macOS disks store it.
+            "A\u{308}rger",
+        ] {
+            assert!(candidate.is_exact_match(name), "{name:?}");
+        }
+        for name in ["Attack on Titan 2", "Shingeki", "Attack  on Titan", ""] {
+            assert!(!candidate.is_exact_match(name), "{name:?}");
+        }
     }
 
     const SEARCH_ANSWER: &str =

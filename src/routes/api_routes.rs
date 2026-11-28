@@ -29,6 +29,7 @@ use crate::{
             update_series,
         },
         locales::{get_translations, list_locales},
+        metadata::get_metadata_candidates,
         scans::{scan_all_directories, scan_directory, scan_status},
         settings::{get_settings, replace_settings},
         totp::{
@@ -82,6 +83,10 @@ pub fn set_up_routes() -> Router<AppState> {
             put(choose_series_cover).delete(reset_series_cover),
         )
         .route("/series/{id}/reading_mode", put(set_reading_mode))
+        .route(
+            "/series/{id}/metadata/candidates",
+            get(get_metadata_candidates),
+        )
         .route("/books/started", get(started_books))
         .route("/books/{id}", get(retrieve_metadata))
         .route("/books/{id}/file", get(request_file))
@@ -151,13 +156,15 @@ mod tests {
     use axum::{http::HeaderMap, Router};
 
     use crate::{
+        app_state::AppState,
+        metadata::MetadataProviders,
         routes::{
             auth::{hash_secret, hash_token},
             email_helper::Mailer,
         },
         scanner::folder_watch::FolderWatch,
         test_support::{
-            code_in, encoded_image, insert_texts, insert_user, TempDatabase, TempDir,
+            code_in, encoded_image, insert_texts, insert_user, ProviderStub, TempDatabase, TempDir,
             TEST_SETUP_CODE,
         },
     };
@@ -3122,6 +3129,7 @@ mod tests {
         ("PUT", "/api/v1/series/1/cover"),
         ("DELETE", "/api/v1/series/1/cover"),
         ("PUT", "/api/v1/series/1/reading_mode"),
+        ("GET", "/api/v1/series/1/metadata/candidates"),
         ("GET", "/api/v1/books/started"),
         ("GET", "/api/v1/books/1"),
         ("GET", "/api/v1/books/1/file"),
@@ -4255,5 +4263,238 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(body, serde_json::json!({ "error": "email_not_configured" }));
+    }
+
+    /// Shaped like AniList's answer to a search for Berserk, trimmed to two entries.
+    const ANILIST_SEARCH: &str = r#"{"data":{"Page":{"media":[
+      {"id":30002,"title":{"romaji":"Berserk","english":"Berserk","native":"ベルセルク"},
+       "startDate":{"year":1989},"endDate":{"year":null},
+       "description":"His name is Guts.<br>\n<br>\n(Source: Dark Horse)",
+       "coverImage":{"extraLarge":"https://s4.anilist.co/file/anilistcdn/media/manga/cover/large/bx30002.jpg"},
+       "genres":["Action"],"tags":[],
+       "staff":{"edges":[{"role":"Story & Art","node":{"name":{"full":"Kentarou Miura"}}}]}},
+      {"id":36408,"title":{"romaji":"BERSERK THE PROTOTYPE","english":"Berserk: The Prototype"},
+       "startDate":{"year":1988},"endDate":{"year":1988}}
+    ]}}}"#;
+
+    /// Router state on `temp` whose metadata providers are `stub`.
+    fn asking(temp: &TempDatabase, stub: &ProviderStub) -> AppState {
+        AppState {
+            metadata: MetadataProviders::at(&stub.url, Duration::from_secs(5)),
+            ..temp.state(Mailer::Disabled)
+        }
+    }
+
+    /// A series named `name` in a new library of `library_type`, flagged sensitive or not.
+    fn series_in_library(
+        temp: &TempDatabase,
+        name: &str,
+        library_type: &str,
+        sensitive: bool,
+    ) -> i64 {
+        temp.db
+            .setup_new_transaction(|conn| {
+                conn.execute(
+                    "INSERT INTO library (library_name, library_type) VALUES (?1, ?1)",
+                    [library_type],
+                )
+                .unwrap();
+                let library = conn.last_insert_rowid();
+                conn.execute(
+                    "INSERT INTO series (name, match_key, is_sensitive) VALUES (?1, lower(?1), ?2)",
+                    rusqlite::params![name, sensitive],
+                )
+                .unwrap();
+                let series = conn.last_insert_rowid();
+                conn.execute(
+                    "INSERT INTO library_elements (library_id, series_id) VALUES (?1, ?2)",
+                    [library, series],
+                )
+                .unwrap();
+                Ok(series)
+            })
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn an_admin_gets_the_candidates_for_a_series_name_or_their_own_query() {
+        let temp = TempDatabase::open();
+        let admin = logged_in(&temp, "alice", "admin");
+        let berserk = series_in_library(&temp, "Berserk", "manga", false);
+        let stub = ProviderStub::answering(StatusCode::OK, &[], ANILIST_SEARCH).await;
+        let app = set_up_routes().with_state(asking(&temp, &stub));
+        let uri = format!("/api/v1/series/{berserk}/metadata/candidates");
+
+        let (status, _, body) = call(&app, authorized("GET", &uri, &admin, None)).await;
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            json(&body),
+            serde_json::json!({
+                "provider": "anilist",
+                "query": "Berserk",
+                "candidates": [
+                    {
+                        "external_id": "30002",
+                        "title": "Berserk",
+                        "alternative_titles": ["ベルセルク"],
+                        "start_year": 1989,
+                        "end_year": null,
+                        "description": "His name is Guts.\n\n(Source: Dark Horse)",
+                        "cover_url": "https://s4.anilist.co/file/anilistcdn/media/manga/cover/large/bx30002.jpg",
+                        "authors": ["Kentarou Miura"],
+                        "tags": ["Action"],
+                        "exact_match": true,
+                    },
+                    {
+                        "external_id": "36408",
+                        "title": "Berserk: The Prototype",
+                        "alternative_titles": ["BERSERK THE PROTOTYPE"],
+                        "start_year": 1988,
+                        "end_year": 1988,
+                        "description": null,
+                        "cover_url": null,
+                        "authors": [],
+                        "tags": [],
+                        "exact_match": false,
+                    },
+                ],
+            })
+        );
+        assert_eq!(stub.requests()[0]["variables"]["search"], "Berserk");
+
+        let (status, _, again) = call(&app, authorized("GET", &uri, &admin, None)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(again, body);
+        assert_eq!(stub.requests().len(), 1, "the second came from the cache");
+
+        let own = format!("{uri}?query=%20berserk%20THE%20prototype%20");
+        let (status, _, body) = call(&app, authorized("GET", &own, &admin, None)).await;
+        assert_eq!(status, StatusCode::OK);
+        let body = json(&body);
+        assert_eq!(body["query"], "berserk THE prototype", "trimmed");
+        let exact: Vec<bool> = body["candidates"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|candidate| candidate["exact_match"].as_bool().unwrap())
+            .collect();
+        assert_eq!(exact, [false, true], "by an alternative title");
+        assert_eq!(
+            stub.requests()[1]["variables"]["search"],
+            "berserk THE prototype"
+        );
+    }
+
+    #[tokio::test]
+    async fn only_an_admin_looks_up_a_series_that_may_go_online_with_a_query_that_fits() {
+        let temp = TempDatabase::open();
+        let admin = logged_in(&temp, "alice", "admin");
+        let member = logged_in(&temp, "bob", "member");
+        let berserk = series_in_library(&temp, "Berserk", "manga", false);
+        let private = series_in_library(&temp, "Tax forms", "manga", true);
+        let novel = series_in_library(&temp, "Dune", "books", false);
+        let stub = ProviderStub::answering(StatusCode::OK, &[], ANILIST_SEARCH).await;
+        let app = set_up_routes().with_state(asking(&temp, &stub));
+        let candidates = |series: i64, query: &str| {
+            format!("/api/v1/series/{series}/metadata/candidates{query}")
+        };
+        let too_long = format!("?query={}", "x".repeat(201));
+
+        for (token, uri, expected_status, expected_key) in [
+            (
+                &member,
+                candidates(berserk, ""),
+                StatusCode::FORBIDDEN,
+                "forbidden",
+            ),
+            (
+                &admin,
+                candidates(novel + 1, ""),
+                StatusCode::NOT_FOUND,
+                "not_found",
+            ),
+            (
+                &admin,
+                candidates(private, ""),
+                StatusCode::CONFLICT,
+                "sensitive_item",
+            ),
+            (
+                &admin,
+                candidates(private, "?query=Berserk"),
+                StatusCode::CONFLICT,
+                "sensitive_item",
+            ),
+            (
+                &admin,
+                candidates(novel, ""),
+                StatusCode::CONFLICT,
+                "no_metadata_provider",
+            ),
+            (
+                &admin,
+                candidates(berserk, "?query="),
+                StatusCode::BAD_REQUEST,
+                "invalid_query",
+            ),
+            (
+                &admin,
+                candidates(berserk, "?query=%20%20"),
+                StatusCode::BAD_REQUEST,
+                "invalid_query",
+            ),
+            (
+                &admin,
+                candidates(berserk, &too_long),
+                StatusCode::BAD_REQUEST,
+                "invalid_query",
+            ),
+        ] {
+            let (status, _, body) = call(&app, authorized("GET", &uri, token, None)).await;
+            assert_eq!(status, expected_status, "{uri}");
+            assert_eq!(
+                json(&body),
+                serde_json::json!({ "error": expected_key }),
+                "{uri}"
+            );
+        }
+        assert!(
+            stub.requests().is_empty(),
+            "none of them reached the provider"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_busy_provider_answers_503_with_retry_after_and_a_failing_one_502() {
+        let temp = TempDatabase::open();
+        let admin = logged_in(&temp, "alice", "admin");
+        let berserk = series_in_library(&temp, "Berserk", "manga", false);
+        let uri = format!("/api/v1/series/{berserk}/metadata/candidates");
+
+        let busy = ProviderStub::answering(
+            StatusCode::TOO_MANY_REQUESTS,
+            &[("retry-after", "30")],
+            r#"{"data":null}"#,
+        )
+        .await;
+        let app = set_up_routes().with_state(asking(&temp, &busy));
+        let (status, headers, body) = call(&app, authorized("GET", &uri, &admin, None)).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(headers["retry-after"], "30");
+        assert_eq!(
+            json(&body),
+            serde_json::json!({ "error": "provider_rate_limited" })
+        );
+
+        let failing = ProviderStub::answering(StatusCode::INTERNAL_SERVER_ERROR, &[], "{}").await;
+        let app = set_up_routes().with_state(asking(&temp, &failing));
+        let (status, headers, body) = call(&app, authorized("GET", &uri, &admin, None)).await;
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+        assert!(!headers.contains_key("retry-after"));
+        assert_eq!(
+            json(&body),
+            serde_json::json!({ "error": "provider_unavailable" })
+        );
     }
 }

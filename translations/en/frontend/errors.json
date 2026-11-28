@@ -22,6 +22,8 @@
   "invalid_name": "A name needs 1 to 200 characters.",
   "@invalid_name": "The name of a library or a series.",
   "invalid_or_expired_code": "This code is wrong or has expired.",
+  "invalid_query": "A search needs 1 to 200 characters.",
+  "@invalid_query": "What an admin searches an online source for, such as a series' title.",
   "invalid_reading_mode": "This reading mode doesn't exist. Updating the app may help.",
   "@invalid_reading_mode": "The app asked for a reading mode the server doesn't know, usually because the app is outdated.",
   "invalid_release_years": "The release years don't fit: each from 1 to 9999, and the first not after the last.",

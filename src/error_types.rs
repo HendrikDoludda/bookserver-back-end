@@ -446,6 +446,8 @@ pub enum MetadataError {
     SensitiveItem,
     #[error("None of the series' libraries is of a type a metadata provider covers")]
     NoProvider,
+    #[error("A search needs 1 to 200 characters")]
+    InvalidQuery,
     #[error("The external id is not in the form its provider uses")]
     InvalidExternalId,
     #[error("The provider has no such entry, or none the series may be matched to")]
@@ -461,6 +463,7 @@ impl MetadataError {
         match self {
             MetadataError::SensitiveItem => (StatusCode::CONFLICT, "sensitive_item"),
             MetadataError::NoProvider => (StatusCode::CONFLICT, "no_metadata_provider"),
+            MetadataError::InvalidQuery => (StatusCode::BAD_REQUEST, "invalid_query"),
             MetadataError::InvalidExternalId => (StatusCode::BAD_REQUEST, "invalid_external_id"),
             MetadataError::CandidateNotFound => (StatusCode::NOT_FOUND, "candidate_not_found"),
             MetadataError::RateLimited { .. } => {
@@ -812,6 +815,11 @@ mod tests {
                 MetadataError::NoProvider.into(),
                 StatusCode::CONFLICT,
                 "no_metadata_provider",
+            ),
+            (
+                MetadataError::InvalidQuery.into(),
+                StatusCode::BAD_REQUEST,
+                "invalid_query",
             ),
             (
                 MetadataError::InvalidExternalId.into(),

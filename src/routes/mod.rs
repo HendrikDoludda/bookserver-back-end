@@ -8,6 +8,7 @@ pub mod email_codes;
 pub mod email_helper;
 pub mod library_management;
 pub mod login;
+pub mod metadata_lookup;
 pub mod password_reset;
 pub mod reading_modes;
 pub mod reading_progress;
